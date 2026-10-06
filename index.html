@@ -518,7 +518,7 @@
       };
 
       // =======================================================================
-      // PROCESADO INTELIGENTE DEL PDF (GEMINI 3.8 FLASH DIRECTO CON RESPALDO)
+      // PROCESADO INTELIGENTE CON TEMARIO INTEGRADO Y PREGUNTAS DE RESERVA
       // =======================================================================
       const procesarExamenConVision = async () => {
         const keyLimpia = apiKeyGemini.trim();
@@ -534,10 +534,9 @@
 
         localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
-        setMensajeEstado("Leyendo documento PDF...");
+        setMensajeEstado("Leyendo documento PDF y preparando visión artificial...");
 
         try {
-          // 1. Convertir PDF a Base64
           const base64Pdf = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => {
@@ -549,18 +548,30 @@
             reader.readAsDataURL(archivoPdf);
           });
 
+          // Catálogo completo de los 60 temas para que la IA clasifique con precisión
+          const catalogoTemasGuia = TEMARIO_OFICIAL_60.map(t => `${t.codigo}: ${t.titulo}`).join('\n');
+
           const promptInstrucciones = `
-Eres un asistente experto en oposiciones de Archivos y Bibliotecas.
+Eres un preparador y calificador experto en oposiciones de Archivos y Bibliotecas de la Administración Pública española.
 Analiza visualmente este examen oficial en PDF.
 
-INSTRUCCIONES CLAVE:
-1. Extrae TODAS las preguntas tipo test con sus cuatro opciones (A, B, C, D).
-2. Ignora encabezados de página, pies, números de página, sellos y firmas digitales con CSV.
-3. Si al final del PDF o en alguna página viene la plantilla oficial de soluciones, lee las respuestas correctas y asígnalas a cada pregunta ("a", "b", "c" o "d"). Si no viene la plantilla, pon "a" por defecto.
-4. Asigna a cada pregunta un código de tema adecuado (entre COM-01 y COM-12 para comunes, o ESP-01 a ESP-48 para archivística/bibliotecas).
+DIRECTIVAS ESTRICTAS Y OBLIGATORIAS:
+1. EXTRAE TODAS LAS PREGUNTAS DEL EXAMEN:
+   - Extrae tanto las preguntas ordinarias (ej. 1 a 75) como las PREGUNTAS DE RESERVA (ej. 10 de reserva o las que vengan al final).
+   - ¡NO OMITAS LAS PREGUNTAS DE RESERVA! En las preguntas de reserva, añade al inicio del enunciado "[RESERVA] " para que queden claramente identificadas.
+   - Cada pregunta debe contener obligatoriamente su enunciado y las cuatro opciones (A, B, C, D).
 
-DEVOLUCIÓN OBLIGATORIA:
-Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicional. Estructura exacta por elemento:
+2. PLANTILLA OFICIAL DE SOLUCIONES:
+   - Lee con máxima atención la plantilla de respuestas que acompaña al examen (al final o en sus páginas).
+   - Asigna la respuesta correcta oficial ("a", "b", "c" o "d") a CADA UNA de las preguntas ordinarias Y de las preguntas de reserva.
+
+3. ASIGNACIÓN PRECISA DEL TEMA DEL TEMARIO OFICIAL:
+   - No inventes códigos. Compara el contenido de la pregunta con este catálogo oficial de 60 temas y asigna el código exacto que mejor corresponda:
+
+${catalogoTemasGuia}
+
+FORMATO DE SALIDA OBLIGATORIO:
+Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin markdown.
 [
   {
     "numero": 1,
@@ -591,11 +602,11 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
               }
             ],
             generationConfig: {
-              responseMimeType: "application/json"
+              responseMimeType: "application/json",
+              maxOutputTokens: 8192
             }
           };
 
-          // Lista ordenada de modelos modernos (el primero es gemini-3.8-flash, recomendado por Google)
           const modelosCandidatos = [
             'gemini-3.8-flash',
             'gemini-3.5-flash',
@@ -607,7 +618,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
 
           for (const modelo of modelosCandidatos) {
             try {
-              setMensajeEstado(`Analizando examen con ${modelo}...`);
+              setMensajeEstado(`Analizando examen completo (ordinarias + reserva) con ${modelo}...`);
               const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${keyLimpia}`;
 
               const respuesta = await fetch(endpoint, {
@@ -619,7 +630,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
               if (!respuesta.ok) {
                 const errData = await respuesta.json();
                 errorFinal = errData?.error?.message || `HTTP ${respuesta.status}`;
-                continue; // Probar siguiente modelo si este falla
+                continue;
               }
 
               const resultadoJson = await respuesta.json();
@@ -637,7 +648,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
               const parsed = JSON.parse(rawText);
               if (Array.isArray(parsed) && parsed.length > 0) {
                 preguntasParseadas = parsed;
-                break; // Éxito
+                break;
               }
             } catch (errLoop) {
               errorFinal = errLoop.message;
@@ -649,7 +660,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
           }
 
           setPreguntasExtraidas(preguntasParseadas);
-          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
+          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas (incluyendo reservas) con temas oficiales clasificados.`);
         } catch (err) {
           console.error("Error en extracción:", err);
           alert("Error procesando el PDF: " + err.message);
@@ -1397,7 +1408,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                         Incorporar un examen oficial
                       </h1>
                       <p className="text-xs text-slate-500 mt-1">
-                        Sube cualquier PDF de convocatoria. El motor visual detectará preguntas, opciones y plantillas automáticamente.
+                        Sube cualquier PDF de convocatoria. El motor visual detectará preguntas ordinarias, preguntas de reserva, opciones y plantillas oficiales.
                       </p>
                     </div>
 
@@ -1496,7 +1507,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                           disabled={!archivoPdf || procesandoVision}
                           className="px-6 py-3 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
                         >
-                          {procesandoVision ? "Procesando examen..." : "⚡ Procesar examen con visión artificial"}
+                          {procesandoVision ? "Procesando examen completo..." : "⚡ Procesar examen con visión artificial"}
                         </button>
                       </div>
 
