@@ -53,6 +53,169 @@
     const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
     // =========================================================================
+    // SERVICIO DE ACCESO A BASE DE DATOS (SUPABASE)
+    // =========================================================================
+    const ExamenService = {
+      async obtenerExamenes() {
+        if (!supabaseClient) return [];
+        const { data, error } = await supabaseClient
+          .from('examenes_subidos')
+          .select('*, preguntas(count)')
+          .order('created_at', { ascending: false });
+        if (error) {
+          console.error("Error obteniendo exámenes:", error);
+          return [];
+        }
+        return data || [];
+      },
+
+      async obtenerPreguntasPorExamen(examenId) {
+        if (!supabaseClient) return [];
+        const { data, error } = await supabaseClient
+          .from('preguntas')
+          .select('*')
+          .eq('examen_id', examenId)
+          .order('created_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      },
+
+      async obtenerTodasLasPreguntas() {
+        if (!supabaseClient) return [];
+        const { data, error } = await supabaseClient
+          .from('preguntas')
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      },
+
+      async guardarPregunta(pregunta) {
+        if (!supabaseClient) return null;
+        if (pregunta.id) {
+          const { data, error } = await supabaseClient
+            .from('preguntas')
+            .update({
+              tema_codigo: pregunta.tema_codigo,
+              enunciado: pregunta.enunciado,
+              opcion_a: pregunta.opcion_a,
+              opcion_b: pregunta.opcion_b,
+              opcion_c: pregunta.opcion_c,
+              opcion_d: pregunta.opcion_d,
+              respuesta_correcta: (pregunta.respuesta_correcta || 'a').toLowerCase(),
+              justificacion: pregunta.justificacion
+            })
+            .eq('id', pregunta.id)
+            .select();
+          if (error) throw error;
+          return data[0];
+        } else {
+          const { data, error } = await supabaseClient
+            .from('preguntas')
+            .insert([pregunta])
+            .select();
+          if (error) throw error;
+          return data[0];
+        }
+      },
+
+      async eliminarPregunta(preguntaId) {
+        if (!supabaseClient) return;
+        const { error } = await supabaseClient
+          .from('preguntas')
+          .delete()
+          .eq('id', preguntaId);
+        if (error) throw error;
+      },
+
+      async crearExamen(examen) {
+        if (!supabaseClient) return null;
+        const { data, error } = await supabaseClient
+          .from('examenes_subidos')
+          .insert([examen])
+          .select();
+        if (error) throw error;
+        return data[0];
+      },
+
+      async eliminarExamenCompleto(examenId) {
+        if (!supabaseClient) return;
+        const { error } = await supabaseClient
+          .from('examenes_subidos')
+          .delete()
+          .eq('id', examenId);
+        if (error) throw error;
+      },
+
+      async registrarResultadoExamen(resultado, respuestasDetalle) {
+        if (!supabaseClient) return;
+        const { data: examenHist, error: errHist } = await supabaseClient
+          .from('examenes_historial')
+          .insert([resultado])
+          .select();
+        if (errHist) {
+          console.error("Error guardando historial:", errHist);
+          return;
+        }
+
+        const historialId = examenHist[0].id;
+        const detalles = respuestasDetalle.map(d => ({
+          examen_id: historialId,
+          pregunta_id: d.pregunta_id,
+          opcion_seleccionada: d.opcion_seleccionada,
+          es_correcta: d.es_correcta,
+          marcada_duda: d.marcada_duda || false
+        }));
+
+        if (detalles.length > 0) {
+          const { error: errDet } = await supabaseClient
+            .from('respuestas_detalle')
+            .insert(detalles);
+          if (errDet) console.error("Error guardando detalle respuestas:", errDet);
+        }
+      },
+
+      async obtenerHistorialExamenes() {
+        if (!supabaseClient) return [];
+        const { data, error } = await supabaseClient
+          .from('examenes_historial')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) return [];
+        return data || [];
+      },
+
+      async obtenerFallosPendientes() {
+        if (!supabaseClient) return [];
+        const { data, error } = await supabaseClient
+          .from('respuestas_detalle')
+          .select('*, preguntas(*)')
+          .eq('es_correcta', false)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (error) return [];
+        return data || [];
+      }
+    };
+
+    // Adaptador de formato de preguntas de Supabase a la interfaz de test
+    const normalizarPregunta = (p, idx) => ({
+      id: p.id,
+      numero_orden: idx + 1,
+      enunciado: p.enunciado,
+      evidencia_texto: p.justificacion || 'Sin justificación normativa registrada.',
+      respuesta_correcta: (p.respuesta_correcta || 'a').toLowerCase(),
+      tema_codigo: p.tema_codigo || 'ESP-01',
+      origen: p.origen || 'Examen Oficial',
+      opciones: [
+        { id: `${p.id}_a`, letra: "A", valor: "a", texto: p.opcion_a, es_correcta: (p.respuesta_correcta || '').toLowerCase() === 'a' },
+        { id: `${p.id}_b`, letra: "B", valor: "b", texto: p.opcion_b, es_correcta: (p.respuesta_correcta || '').toLowerCase() === 'b' },
+        { id: `${p.id}_c`, letra: "C", valor: "c", texto: p.opcion_c, es_correcta: (p.respuesta_correcta || '').toLowerCase() === 'c' },
+        { id: `${p.id}_d`, letra: "D", valor: "d", texto: p.opcion_d, es_correcta: (p.respuesta_correcta || '').toLowerCase() === 'd' }
+      ]
+    });
+
+    // =========================================================================
     // TEMARIO OFICIAL (60 TEMAS)
     // =========================================================================
     const TEMARIO_OFICIAL_60 = [
@@ -121,64 +284,43 @@
       { id: 60, codigo: "ESP-48", bloque: "Específico", numero: 48, titulo: "Sistemas integrados de gestión bibliotecaria." }
     ];
 
-    const EXAMENES_OFICIALES = [
-      { id: "of-1", titulo: "Diputación Provincial de Sevilla — Auxiliar de Archivos", anio: 2023, preguntas: 100, reservas: 5, penalizacion: "-0,33 pts" },
-      { id: "of-2", titulo: "Ayuntamiento de Sevilla — Ayudante de Biblioteca", anio: 2022, preguntas: 80, reservas: 4, penalizacion: "-0,25 pts" },
-      { id: "of-3", titulo: "Diputación Provincial de Córdoba — Técnico Auxiliar Archivo", anio: 2023, preguntas: 90, reservas: 5, penalizacion: "-0,33 pts" },
-      { id: "of-4", titulo: "Junta de Andalucía — Cuerpo Auxiliar Administrativo", anio: 2021, preguntas: 105, reservas: 5, penalizacion: "-0,33 pts" }
-    ];
-
-    const BANCO_PREGUNTAS = [
-      {
-        id: "p1",
-        origen: "oficial",
-        numero_orden: 1,
-        enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto administrativo fuera expreso según la Ley 39/2015?",
-        evidencia_texto: "Art. 124.1 Ley 39/2015: El plazo para la interposición del recurso de reposición será de un mes, si el acto fuera expreso. Transcurrido dicho plazo, únicamente podrá interponerse recurso contencioso-administrativo.",
-        opciones: [
-          { id: "o1", letra: "A", texto: "Un mes a contar desde el día siguiente a la notificación o publicación.", es_correcta: true },
-          { id: "o2", letra: "B", texto: "Dos meses a contar desde el día siguiente a la notificación.", es_correcta: false },
-          { id: "o3", letra: "C", texto: "Tres meses en caso de actos presuntos y expresos.", es_correcta: false },
-          { id: "o4", letra: "D", texto: "Quince días hábiles improrrogables.", es_correcta: false }
-        ]
-      },
-      {
-        id: "p2",
-        origen: "temario",
-        numero_orden: 2,
-        enunciado: "Según el principio archivístico de procedencia o respeto al origen de los fondos documentales:",
-        evidencia_texto: "Tema ESP-13: Los documentos producidos por una institución u organismo no deben mezclarse bajo ningún concepto con los producidos por otra entidad u organismo productor.",
-        opciones: [
-          { id: "o5", letra: "A", texto: "Los expedientes deben clasificarse por orden cronológico estricto independientemente del productor.", es_correcta: false },
-          { id: "o6", letra: "B", texto: "Los documentos de cada fondo deben mantenerse agrupados sin mezclarse con otros.", es_correcta: true },
-          { id: "o7", letra: "C", texto: "Los documentos históricos pasan directamente a expurgo a los 10 años.", es_correcta: false },
-          { id: "o8", letra: "D", texto: "Solo se aplica a la documentación generada en soporte papel tradicional.", es_correcta: false }
-        ]
-      }
-    ];
-
     function App() {
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
       const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
       const [passwordInput, setPasswordInput] = useState("");
-      const [moduloActivo, setModuloActivo] = useState("materiales");
+      const [moduloActivo, setModuloActivo] = useState("oficiales");
       const [modoOscuro, setModoOscuro] = useState(false);
 
       const [bucketActivo, setBucketActivo] = useState("Temario");
       const [archivosComunes, setArchivosComunes] = useState([]);
       const [archivosEspecificos, setArchivosEspecificos] = useState([]);
       const [cargandoArchivos, setCargandoArchivos] = useState(true);
-
       const [filtroBloque, setFiltroBloque] = useState("todos");
 
-      // Sala de examen
+      // Estado de exámenes cargados desde Supabase
+      const [examenesBD, setExamenesBD] = useState([]);
+      const [cargandoExamenes, setCargandoExamenes] = useState(false);
+
+      // Estado de la sala de examen
       const [examenActivo, setExamenActivo] = useState(false);
-      const [preguntasTest, setPreguntasTest] = useState(BANCO_PREGUNTAS);
+      const [tituloExamenActivo, setTituloExamenActivo] = useState("Simulacro Oficial");
+      const [preguntasTest, setPreguntasTest] = useState([]);
       const [indicePregunta, setIndicePregunta] = useState(0);
       const [respuestas, setRespuestas] = useState({});
       const [segundos, setSegundos] = useState(3600);
       const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
       const [examenCorregido, setExamenCorregido] = useState(false);
+
+      // Estado para Gestión Avanzada (GA)
+      const [examenSeleccionadoGA, setExamenSeleccionadoGA] = useState(null);
+      const [preguntasGA, setPreguntasGA] = useState([]);
+      const [preguntaEnEdicion, setPreguntaEnEdicion] = useState(null);
+      const [modalNuevoExamen, setModalNuevoExamen] = useState(false);
+      const [nuevoExamenForm, setNuevoExamenForm] = useState({ titulo: "", organismo: "Diputación Provincial de Sevilla", año: 2023, categoria: "Oficial" });
+
+      // Estado de Historial y Errores
+      const [historialSimulacros, setHistorialSimulacros] = useState([]);
+      const [fallosPendientes, setFallosPendientes] = useState([]);
 
       const [tipoDestino, setTipoDestino] = useState("oficiales");
       const [accionTipo, setAccionTipo] = useState("nuevo");
@@ -188,7 +330,38 @@
         else document.documentElement.classList.remove("dark");
       }, [modoOscuro]);
 
-      // Sincronización robusta con Supabase Storage
+      // Cargar lista de exámenes de Supabase
+      const recargarExamenes = useCallback(async () => {
+        setCargandoExamenes(true);
+        try {
+          const listado = await ExamenService.obtenerExamenes();
+          setExamenesBD(listado);
+        } catch (e) {
+          console.error("Error recargando exámenes:", e);
+        } finally {
+          setCargandoExamenes(false);
+        }
+      }, []);
+
+      const recargarHistorialYFallos = useCallback(async () => {
+        try {
+          const hist = await ExamenService.obtenerHistorialExamenes();
+          setHistorialSimulacros(hist);
+          const fallos = await ExamenService.obtenerFallosPendientes();
+          setFallosPendientes(fallos);
+        } catch (e) {
+          console.error("Error cargando historial:", e);
+        }
+      }, []);
+
+      useEffect(() => {
+        if (autenticado) {
+          recargarExamenes();
+          recargarHistorialYFallos();
+        }
+      }, [autenticado, recargarExamenes, recargarHistorialYFallos]);
+
+      // Sincronización con Supabase Storage (Bucket Temario)
       const sincronizarArchivos = useCallback(async () => {
         if (!supabaseClient) return;
         setCargandoArchivos(true);
@@ -246,9 +419,7 @@
         return coincidencia ? coincidencia.name : null;
       }, [archivosComunes, archivosEspecificos]);
 
-      // =========================================================================
-      // ABRIR TEMA: INYECCIÓN BLOB EN PESTAÑA LIMPIA (SIN FORZAR DESCARGA)
-      // =========================================================================
+      // Abrir PDF en pestaña sin descargar
       const handleAbrirTema = async (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
@@ -258,8 +429,6 @@
         }
 
         const url = `${SUPABASE_URL}/storage/v1/object/public/${bucketActivo}/${carpeta}/${encodeURIComponent(nombre)}`;
-
-        // 1. Abrir la pestaña de inmediato para evitar que el navegador la bloquee
         const nuevaPestana = window.open('about:blank', '_blank');
         if (nuevaPestana) {
           nuevaPestana.document.title = `Cargando ${tema.codigo}...`;
@@ -284,16 +453,12 @@
         }
 
         try {
-          // 2. Descargar bytes en memoria
           const resp = await fetch(url);
           if (!resp.ok) throw new Error("No se pudo obtener el archivo desde el almacén.");
           const buffer = await resp.arrayBuffer();
-
-          // 3. Crear Blob con MIME application/pdf forzado
           const pdfBlob = new Blob([buffer], { type: 'application/pdf' });
           const blobUrl = URL.createObjectURL(pdfBlob);
 
-          // 4. Renderizar el visor oficial dentro de la pestaña nueva
           if (nuevaPestana && !nuevaPestana.closed) {
             nuevaPestana.document.title = `${tema.codigo} — ${tema.titulo}`;
             nuevaPestana.document.body.style.margin = '0';
@@ -323,7 +488,7 @@
         }
       };
 
-      // DESCARGAR TEMA A DISCO
+      // Descargar tema a disco
       const handleDescargarTema = (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
@@ -351,16 +516,150 @@
         setExamenActivo(false);
       };
 
-      const iniciarExamen = (filtradas = BANCO_PREGUNTAS) => {
-        setPreguntasTest(filtradas.length > 0 ? filtradas : BANCO_PREGUNTAS);
-        setIndicePregunta(0);
-        setRespuestas({});
-        setSegundos(3600);
-        setExamenCorregido(false);
-        setExamenActivo(true);
+      // Iniciar simulacro desde la BD
+      const lanzarExamenBD = async (examen) => {
+        try {
+          const raw = await ExamenService.obtenerPreguntasPorExamen(examen.id);
+          if (!raw || raw.length === 0) {
+            alert(`El examen "${examen.titulo}" no contiene preguntas todavía.`);
+            return;
+          }
+          const normalizadas = raw.map((p, idx) => normalizarPregunta(p, idx));
+          setPreguntasTest(normalizadas);
+          setTituloExamenActivo(examen.titulo);
+          setIndicePregunta(0);
+          setRespuestas({});
+          setSegundos(normalizadas.length * 90); // 1.5 min por pregunta
+          setExamenCorregido(false);
+          setExamenActivo(true);
+        } catch (err) {
+          alert("Error cargando preguntas del examen: " + err.message);
+        }
       };
 
-      // LOGIN
+      // Temporizador del examen
+      useEffect(() => {
+        if (!examenActivo || examenCorregido) return;
+        const timer = setInterval(() => {
+          setSegundos(s => (s > 0 ? s - 1 : 0));
+        }, 1000);
+        return () => clearInterval(timer);
+      }, [examenActivo, examenCorregido]);
+
+      // Finalizar examen y registrar en Supabase
+      const finalizarYRegistrarExamen = async () => {
+        setExamenCorregido(true);
+
+        let aciertos = 0;
+        let fallos = 0;
+        let blancos = 0;
+
+        const detalles = preguntasTest.map(p => {
+          const resp = respuestas[p.id];
+          const seleccion = resp?.letra?.toLowerCase() || null;
+          const esCorrecta = seleccion === p.respuesta_correcta;
+
+          if (!seleccion) blancos++;
+          else if (esCorrecta) aciertos++;
+          else fallos++;
+
+          return {
+            pregunta_id: p.id,
+            opcion_seleccionada: seleccion,
+            es_correcta: esCorrecta,
+            marcada_duda: resp?.dudosa || false
+          };
+        });
+
+        const penalizacion = fallos * 0.33;
+        const neta = Math.max(0, Number((aciertos - penalizacion).toFixed(2)));
+
+        try {
+          await ExamenService.registrarResultadoExamen({
+            tipo_examen: 'oficial',
+            total_preguntas: preguntasTest.length,
+            aciertos,
+            fallos,
+            blancos,
+            puntuacion_neta: neta,
+            tiempo_segundos: segundos
+          }, detalles);
+          recargarHistorialYFallos();
+        } catch (e) {
+          console.error("Error al registrar resultado:", e);
+        }
+      };
+
+      // =======================================================================
+      // MÉTODOS DE GESTIÓN AVANZADA (GA): EDITAR, BORRAR PREGUNTA Y BORRAR EXAMEN
+      // =======================================================================
+      const cargarPreguntasDeExamenGA = async (examen) => {
+        setExamenSeleccionadoGA(examen);
+        try {
+          const data = await ExamenService.obtenerPreguntasPorExamen(examen.id);
+          setPreguntasGA(data);
+        } catch (e) {
+          alert("Error cargando preguntas: " + e.message);
+        }
+      };
+
+      const handleBorrarExamenCompleto = async (examenId, titulo) => {
+        const confirmar = confirm(`¿ELIMINAR EXAMEN COMPLETO?\n\n"${titulo}"\n\nATENCIÓN: Se eliminará el examen y TODAS las preguntas que contiene de forma automática e irreversible.`);
+        if (!confirmar) return;
+
+        try {
+          await ExamenService.eliminarExamenCompleto(examenId);
+          if (examenSeleccionadoGA?.id === examenId) {
+            setExamenSeleccionadoGA(null);
+            setPreguntasGA([]);
+          }
+          await recargarExamenes();
+          alert("Examen y preguntas eliminados correctamente.");
+        } catch (err) {
+          alert("Error eliminando examen: " + err.message);
+        }
+      };
+
+      const handleBorrarPreguntaIndividual = async (preguntaId) => {
+        if (!confirm("¿Eliminar esta pregunta definitivamente de la base de datos?")) return;
+        try {
+          await ExamenService.eliminarPregunta(preguntaId);
+          setPreguntasGA(prev => prev.filter(p => p.id !== preguntaId));
+          await recargarExamenes();
+        } catch (err) {
+          alert("Error eliminando pregunta: " + err.message);
+        }
+      };
+
+      const handleGuardarPreguntaEditada = async (e) => {
+        e.preventDefault();
+        try {
+          const guardada = await ExamenService.guardarPregunta(preguntaEnEdicion);
+          setPreguntasGA(prev => prev.map(p => p.id === guardada.id ? guardada : p));
+          setPreguntaEnEdicion(null);
+          await recargarExamenes();
+          alert("Pregunta guardada correctamente.");
+        } catch (err) {
+          alert("Error guardando la pregunta: " + err.message);
+        }
+      };
+
+      const handleCrearExamenNuevo = async (e) => {
+        e.preventDefault();
+        try {
+          const creado = await ExamenService.crearExamen(nuevoExamenForm);
+          setModalNuevoExamen(false);
+          setNuevoExamenForm({ titulo: "", organismo: "Diputación Provincial de Sevilla", año: 2023, categoria: "Oficial" });
+          await recargarExamenes();
+          cargarPreguntasDeExamenGA(creado);
+        } catch (err) {
+          alert("Error creando examen: " + err.message);
+        }
+      };
+
+      // =======================================================================
+      // VISTA DE LOGIN
+      // =======================================================================
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -380,7 +679,7 @@
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
                     required
-                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#E59833] rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none"
+                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#0F6252] rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none"
                   />
                 </div>
                 <div>
@@ -406,17 +705,19 @@
         );
       }
 
-      // SALA DE EXAMEN
+      // =======================================================================
+      // SALA DE EXAMEN INTERACTIVO
+      // =======================================================================
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
         const resp = respuestas[p?.id];
 
-        const responder = (opId, letra) => {
+        const responder = (opVal, letra) => {
           if (examenCorregido) return;
-          const esMisma = resp?.opcion_id === opId;
+          const esMisma = resp?.letra === letra;
           setRespuestas(prev => ({
             ...prev,
-            [p.id]: { opcion_id: esMisma ? null : opId, letra: esMisma ? null : letra, dudosa: resp?.dudosa || false }
+            [p.id]: { letra: esMisma ? null : letra, dudosa: resp?.dudosa || false }
           }));
         };
 
@@ -433,6 +734,20 @@
           return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
         };
 
+        // Cálculos tras corrección
+        let stats = null;
+        if (examenCorregido) {
+          let ac = 0, fa = 0, bl = 0;
+          preguntasTest.forEach(item => {
+            const r = respuestas[item.id]?.letra?.toLowerCase();
+            if (!r) bl++;
+            else if (r === item.respuesta_correcta) ac++;
+            else fa++;
+          });
+          const neta = Math.max(0, ac - (fa * 0.33));
+          stats = { ac, fa, bl, neta: Number(neta.toFixed(2)) };
+        }
+
         return (
           <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
             <header className="h-12 bg-slate-950 border-b border-slate-800 px-5 flex items-center justify-between text-xs">
@@ -440,7 +755,9 @@
                 ← Volver al panel
               </button>
               <div className="flex items-center gap-4">
-                <span className="font-bold text-slate-200">{Object.values(respuestas).filter(r => r.opcion_id).length}/{preguntasTest.length} respondidas</span>
+                <span className="font-bold text-slate-200">
+                  {Object.values(respuestas).filter(r => r.letra).length}/{preguntasTest.length} respondidas
+                </span>
                 <span className="text-slate-700">|</span>
                 <span className="text-amber-400 font-semibold">⚑ {Object.values(respuestas).filter(r => r.dudosa).length} dudosas</span>
                 <span className="text-slate-700">|</span>
@@ -451,7 +768,7 @@
                   Evidencia [E]
                 </button>
                 {!examenCorregido ? (
-                  <button onClick={() => confirm("¿Finalizar y corregir?") && setExamenCorregido(true)} className="px-3 py-1 rounded-lg bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold">
+                  <button onClick={() => confirm("¿Finalizar y corregir el simulacro?") && finalizarYRegistrarExamen()} className="px-3 py-1 rounded-lg bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold">
                     Finalizar
                   </button>
                 ) : (
@@ -465,7 +782,10 @@
             <main className="flex-1 max-w-3xl mx-auto w-full p-6 flex flex-col justify-between">
               <div className="space-y-4">
                 <div className="flex justify-between items-center text-xs text-slate-400 font-medium">
-                  <span>PREGUNTA {p.numero_orden} DE {preguntasTest.length}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-bold">{p.tema_codigo}</span>
+                    <span>PREGUNTA {indicePregunta + 1} DE {preguntasTest.length}</span>
+                  </div>
                   <button onClick={toggleDuda} className="text-amber-400 hover:underline">
                     {resp?.dudosa ? '★ Dudosa marcada' : '☆ Marcar dudosa'}
                   </button>
@@ -473,20 +793,21 @@
                 <h2 className="text-base font-semibold text-white leading-relaxed">{p.enunciado}</h2>
                 <div className="space-y-2.5 pt-2">
                   {p.opciones.map(op => {
-                    const sel = resp?.opcion_id === op.id;
+                    const sel = resp?.letra === op.letra;
                     let cls = 'border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-800/60';
                     if (examenCorregido) {
-                      if (op.es_correcta) cls = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
-                      else if (sel) cls = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
+                      if (op.es_correcta) cls = 'border-emerald-500 bg-emerald-950/50 text-emerald-200 font-bold';
+                      else if (sel) cls = 'border-rose-500 bg-rose-950/50 text-rose-200 line-through';
+                      else cls = 'opacity-40 border-slate-800 text-slate-500';
                     } else if (sel) {
-                      cls = 'border-[#0F6252] bg-[#0F6252]/20 text-white font-semibold';
+                      cls = 'border-[#0F6252] bg-[#0F6252]/20 text-white font-semibold ring-1 ring-[#0F6252]';
                     }
 
                     return (
                       <button
                         key={op.id}
-                        onClick={() => responder(op.id, op.letra)}
-                        className={`w-full text-left p-3 rounded-xl border text-xs flex items-start gap-3 transition ${cls}`}
+                        onClick={() => responder(op.valor, op.letra)}
+                        className={`w-full text-left p-3.5 rounded-xl border text-xs flex items-start gap-3 transition ${cls}`}
                       >
                         <span className="font-bold px-2 py-0.5 bg-slate-800 rounded-lg text-slate-400 text-xs shrink-0">{op.letra}</span>
                         <span className="leading-snug pt-0.5">{op.texto}</span>
@@ -494,13 +815,45 @@
                     );
                   })}
                 </div>
+
+                {examenCorregido && p.evidencia_texto && (
+                  <div className="mt-4 p-4 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-200 text-xs leading-relaxed">
+                    <span className="font-bold text-amber-400 block mb-1">📖 Justificación jurídica / técnica:</span>
+                    {p.evidencia_texto}
+                  </div>
+                )}
               </div>
+
+              {/* Estadísticas de resultado si está corregido */}
+              {examenCorregido && stats && (
+                <div className="my-6 bg-slate-950 border border-slate-800 rounded-2xl p-5">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Resultado de la prueba</h3>
+                  <div className="grid grid-cols-4 gap-3 text-center">
+                    <div className="bg-emerald-950/40 border border-emerald-900/60 p-2.5 rounded-xl">
+                      <span className="text-[10px] text-emerald-400 font-bold uppercase">Aciertos (+1)</span>
+                      <p className="text-xl font-black text-emerald-300">{stats.ac}</p>
+                    </div>
+                    <div className="bg-rose-950/40 border border-rose-900/60 p-2.5 rounded-xl">
+                      <span className="text-[10px] text-rose-400 font-bold uppercase">Fallos (-0.33)</span>
+                      <p className="text-xl font-black text-rose-300">{stats.fa}</p>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">Blancos</span>
+                      <p className="text-xl font-black text-slate-300">{stats.bl}</p>
+                    </div>
+                    <div className="bg-[#0F6252]/20 border border-[#0F6252]/40 p-2.5 rounded-xl">
+                      <span className="text-[10px] text-emerald-400 font-bold uppercase">Nota Neta</span>
+                      <p className="text-xl font-black text-emerald-400">{stats.neta} / {preguntasTest.length}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-6 border-t border-slate-800 flex justify-between items-center">
                 <button
                   disabled={indicePregunta === 0}
                   onClick={() => setIndicePregunta(i => i - 1)}
-                  className="px-4 py-2 rounded-xl border border-slate-800 text-xs font-semibold disabled:opacity-30"
+                  className="px-4 py-2 rounded-xl border border-slate-800 text-xs font-semibold disabled:opacity-30 hover:bg-slate-800"
                 >
                   ← Anterior
                 </button>
@@ -508,7 +861,7 @@
                 <button
                   disabled={indicePregunta === preguntasTest.length - 1}
                   onClick={() => setIndicePregunta(i => i + 1)}
-                  className="px-4 py-2 rounded-xl border border-slate-800 text-xs font-semibold disabled:opacity-30"
+                  className="px-4 py-2 rounded-xl border border-slate-800 text-xs font-semibold disabled:opacity-30 hover:bg-slate-800"
                 >
                   Siguiente →
                 </button>
@@ -519,8 +872,8 @@
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
                 <div className="bg-slate-950 border border-slate-800 max-w-lg w-full p-5 rounded-2xl space-y-3">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                    <span className="text-xs font-bold text-slate-300">EVIDENCIA / FUENTE P.{p.numero_orden}</span>
-                    <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400">✕</button>
+                    <span className="text-xs font-bold text-slate-300">EVIDENCIA / FUENTE P.{indicePregunta + 1}</span>
+                    <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 hover:text-white">✕</button>
                   </div>
                   <p className="text-xs text-slate-200 leading-relaxed bg-slate-900 p-3.5 rounded-xl border border-slate-800">
                     {p.evidencia_texto}
@@ -532,7 +885,9 @@
         );
       }
 
-      // NAVEGACIÓN Y DASHBOARD
+      // =======================================================================
+      // NAVEGACIÓN Y DASHBOARD PRINCIPAL
+      // =======================================================================
       const navItems = [
         { id: "inicio", sigla: "IN", label: "Inicio" },
         { id: "oficiales", sigla: "OF", label: "Exámenes oficiales" },
@@ -555,6 +910,7 @@
       return (
         <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950">
           
+          {/* BARRA LATERAL */}
           <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
             <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800">
               <div className="w-8 h-8 rounded-xl bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
@@ -591,6 +947,7 @@
             </nav>
           </aside>
 
+          {/* CONTENEDOR CENTRAL */}
           <div className="flex-1 flex flex-col min-w-0">
             
             <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-6 flex items-center justify-between shrink-0">
@@ -641,7 +998,7 @@
                           <p className="text-xs text-slate-500 leading-snug">Convocatorias reales con recortes del tribunal y plantillas.</p>
                         </div>
                         <button onClick={() => setModuloActivo("oficiales")} className="mt-4 w-full py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
-                          Ver exámenes →
+                          Ver exámenes ({examenesBD.length}) →
                         </button>
                       </div>
 
@@ -693,17 +1050,74 @@
                         <span className="w-9 h-9 rounded-xl bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs">RE</span>
                         <div>
                           <div className="text-xs font-bold text-[#0F6252] dark:text-emerald-300">Cuaderno de errores prioritario</div>
-                          <div className="text-xs text-slate-600 dark:text-slate-400">Preguntas falladas pendientes de 3 aciertos consecutivos.</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400">Preguntas falladas registradas en tu historial.</div>
                         </div>
                       </div>
                       <button onClick={() => setModuloActivo("errores")} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shrink-0">
-                        Repasar fallos →
+                        Repasar fallos ({fallosPendientes.length}) →
                       </button>
                     </div>
                   </>
                 )}
 
-                {/* 2. MATERIALES & TEMARIO CANÓNICO */}
+                {/* 2. EXÁMENES OFICIALES (OF) - CONEXIÓN REAL CON SUPABASE */}
+                {moduloActivo === "oficiales" && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Exámenes oficiales de convocatorias</h2>
+                        <p className="text-xs text-slate-500">Cargados en tiempo real desde tu base de datos de Supabase.</p>
+                      </div>
+                      <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-stone-800 hover:bg-stone-900 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 self-start sm:self-center">
+                        ⚙️ Administrar / Editar preguntas
+                      </button>
+                    </div>
+
+                    {cargandoExamenes ? (
+                      <div className="p-8 text-center text-xs text-slate-400 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 animate-pulse">
+                        Cargando exámenes desde Supabase...
+                      </div>
+                    ) : examenesBD.length === 0 ? (
+                      <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No hay exámenes dados de alta en Supabase.</p>
+                        <p className="text-xs text-slate-400 mt-1 mb-4">Crea tu primer examen en el panel de Gestión Avanzada.</p>
+                        <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
+                          Ir a Gestión Avanzada
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3">
+                        {examenesBD.map(ex => {
+                          const numPreguntas = ex.preguntas?.[0]?.count || 0;
+                          return (
+                            <div key={ex.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-bold text-xs text-slate-900 dark:text-white">{ex.titulo}</span>
+                                  <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-md text-[10px] font-semibold">{ex.año}</span>
+                                </div>
+                                <div className="text-xs text-slate-500 flex gap-3">
+                                  <span>{ex.organismo}</span>
+                                  <span>•</span>
+                                  <span className="font-semibold text-slate-700 dark:text-slate-300">{numPreguntas} preguntas activas</span>
+                                  <span>•</span>
+                                  <span className="text-rose-600 font-semibold">-0,33 pts penalización</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => lanzarExamenBD(ex)} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
+                                  Hacer simulacro →
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. MATERIALES & MI TEMARIO (60 TEMAS) */}
                 {(moduloActivo === "materiales" || moduloActivo === "temario") && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -753,7 +1167,6 @@
 
                         return (
                           <div key={t.codigo} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
-                            
                             <div className="w-20 shrink-0">
                               <span className="font-extrabold text-sm text-[#0F6252] dark:text-emerald-400 tracking-tight">
                                 {t.codigo}
@@ -789,14 +1202,13 @@
                                 disabled={!nombreArchivo}
                                 className={`px-4 py-2 rounded-xl text-xs font-bold border transition ${
                                   nombreArchivo
-                                    ? 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                                    ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
                                     : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 opacity-60 cursor-not-allowed'
                                 }`}
                               >
                                 Descargar
                               </button>
                             </div>
-
                           </div>
                         );
                       })}
@@ -804,7 +1216,7 @@
                   </div>
                 )}
 
-                {/* 3. INCORPORAR EXAMEN */}
+                {/* 4. INCORPORAR UN EXAMEN (IN) */}
                 {moduloActivo === "ingesta" && (
                   <div className="space-y-4">
                     <div>
@@ -812,7 +1224,7 @@
                         Incorporar un examen
                       </h1>
                       <p className="text-xs text-slate-500 mt-1">
-                        Sube el cuestionario y, si está aparte, su plantilla. El destino oficial aparece preseleccionado, pero no acredita el origen ni las respuestas: ambos deben comprobarse antes de activar.
+                        Sube el cuestionario y su plantilla o regístralo directamente en el panel de Gestión Avanzada.
                       </p>
                     </div>
 
@@ -820,22 +1232,15 @@
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
                         <div>
                           <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                            Subir examen PDF y revisar antes de activar
+                            Subir examen PDF y registrar en el sistema
                           </h2>
                           <p className="text-xs text-slate-500 mt-0.5">
-                            Los originales, huellas, progreso y recortes quedan en almacenamiento privado. El trabajador usa únicamente conexiones HTTPS salientes; ninguna subida activa preguntas.
+                            Puedes dar de alta la convocatoria y registrar las preguntas desde la herramienta de gestión.
                           </p>
                         </div>
-                        <span className="self-start sm:self-center px-3 py-1 rounded-full border border-amber-400 bg-amber-50/50 text-amber-700 text-xs font-semibold shrink-0">
-                          Trabajador local desconectado
-                        </span>
-                      </div>
-
-                      <div className="p-3.5 rounded-2xl bg-[#FFFBEB] border border-[#FEE685] text-amber-900 text-xs space-y-0.5">
-                        <div className="font-bold">Trabajador OCR local no detectado</div>
-                        <div className="text-amber-800 text-[11px]">
-                          Puedes procesar en esta pestaña. Si la cierras, el trabajo queda guardado hasta que vuelva a abrirse el trabajador o pulses recuperar.
-                        </div>
+                        <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
+                          Abrir Gestor de Preguntas →
+                        </button>
                       </div>
 
                       <fieldset className="border-2 border-[#0F6252] rounded-2xl p-4 pt-2 space-y-3">
@@ -872,26 +1277,6 @@
                         </label>
                       </fieldset>
 
-                      <fieldset className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 pt-2">
-                        <legend className="px-2 font-bold text-slate-900 dark:text-white text-xs">
-                          Qué quieres hacer
-                        </legend>
-
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="accion"
-                            checked={accionTipo === "nuevo"}
-                            onChange={() => setAccionTipo("nuevo")}
-                            className="mt-0.5 text-[#0F6252] focus:ring-[#0F6252] w-4 h-4"
-                          />
-                          <div className="text-xs">
-                            <span className="font-bold text-slate-900 dark:text-white">Crear un examen nuevo.</span>{' '}
-                            <span className="text-slate-600 dark:text-slate-400">El cuestionario es obligatorio.</span>
-                          </div>
-                        </label>
-                      </fieldset>
-
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                         <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center">
                           <span className="text-xs font-bold text-slate-800 dark:text-white block mb-1">Cuestionario en PDF</span>
@@ -906,45 +1291,325 @@
                   </div>
                 )}
 
-                {/* 4. OFICIALES */}
-                {moduloActivo === "oficiales" && (
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
+                {/* 5. GESTIÓN AVANZADA (GA) - CONTROL TOTAL: EDITAR Y BORRAR */}
+                {moduloActivo === "gestion" && (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Exámenes oficiales de convocatorias</h2>
-                        <p className="text-xs text-slate-500">Exámenes reales con evidencias recortadas del tribunal original.</p>
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Gestión Avanzada: Banco de Preguntas y Exámenes</h2>
+                        <p className="text-xs text-slate-500">Control total: edita preguntas, elimina fallos o borra exámenes completos de Supabase.</p>
                       </div>
-                      <button onClick={() => setModuloActivo("ingesta")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
-                        + Subir nuevo examen PDF
+                      <button
+                        onClick={() => setModalNuevoExamen(true)}
+                        className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl shadow-xs self-start sm:self-center"
+                      >
+                        + Crear Nuevo Examen
                       </button>
                     </div>
 
-                    <div className="grid gap-3">
-                      {EXAMENES_OFICIALES.map(ex => (
-                        <div key={ex.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-center justify-between">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-bold text-xs text-slate-900 dark:text-white">{ex.titulo}</span>
-                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-md text-[10px] font-semibold">{ex.anio}</span>
+                    {/* Lista de Exámenes */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {examenesBD.map(ex => {
+                        const numPreguntas = ex.preguntas?.[0]?.count || 0;
+                        const esSeleccionado = examenSeleccionadoGA?.id === ex.id;
+
+                        return (
+                          <div 
+                            key={ex.id} 
+                            className={`bg-white dark:bg-slate-900 border rounded-2xl p-5 shadow-sm space-y-3 transition ${
+                              esSeleccionado 
+                                ? 'border-[#0F6252] ring-2 ring-[#0F6252]/20' 
+                                : 'border-slate-200 dark:border-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#0F6252] bg-[#0F6252]/10 px-2 py-0.5 rounded uppercase">
+                                  {ex.categoria} · {ex.año}
+                                </span>
+                                <h3 className="font-bold text-sm text-slate-900 dark:text-white mt-1.5">{ex.titulo}</h3>
+                                <p className="text-xs text-slate-500">{ex.organismo}</p>
+                              </div>
+                              <button
+                                onClick={() => handleBorrarExamenCompleto(ex.id, ex.titulo)}
+                                className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold px-2.5 py-1.5 border border-rose-200 dark:border-rose-900 rounded-xl transition flex items-center gap-1 shrink-0"
+                                title="Eliminar examen completo y todas sus preguntas"
+                              >
+                                🗑️ Borrar examen
+                              </button>
                             </div>
-                            <div className="text-xs text-slate-500 flex gap-3">
-                              <span>{ex.preguntas} preguntas</span>
-                              <span>•</span>
-                              <span>{ex.reservas} de reserva</span>
-                              <span>•</span>
-                              <span className="text-rose-600 font-semibold">{ex.penalizacion}</span>
+
+                            <div className="pt-3 flex items-center justify-between border-t border-slate-100 dark:border-slate-800 text-xs">
+                              <span className="font-semibold text-slate-500">
+                                {numPreguntas} preguntas registradas
+                              </span>
+                              <button
+                                onClick={() => cargarPreguntasDeExamenGA(ex)}
+                                className="font-bold text-[#0F6252] dark:text-emerald-400 hover:underline flex items-center gap-1"
+                              >
+                                Ver / Editar preguntas →
+                              </button>
                             </div>
                           </div>
-                          <button onClick={() => iniciarExamen()} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
-                            Hacer simulacro →
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
+
+                    {/* Editor de preguntas del examen seleccionado */}
+                    {examenSeleccionadoGA && (
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-2">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">EXAMEN SELECCIONADO</span>
+                            <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                              {examenSeleccionadoGA.titulo}
+                            </h3>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full font-bold">
+                              {preguntasGA.length} preguntas
+                            </span>
+                            <button
+                              onClick={() => setPreguntaEnEdicion({
+                                examen_id: examenSeleccionadoGA.id,
+                                tema_codigo: "ESP-01",
+                                enunciado: "",
+                                opcion_a: "",
+                                opcion_b: "",
+                                opcion_c: "",
+                                opcion_d: "",
+                                respuesta_correcta: "a",
+                                justificacion: ""
+                              })}
+                              className="px-3 py-1.5 bg-[#0F6252] text-white text-xs font-bold rounded-xl"
+                            >
+                              + Añadir pregunta
+                            </button>
+                          </div>
+                        </div>
+
+                        {preguntasGA.length === 0 ? (
+                          <div className="py-8 text-center text-xs text-slate-400">
+                            Este examen no tiene preguntas aún. Pulsa en "+ Añadir pregunta" para registrar una.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {preguntasGA.map((p, idx) => (
+                              <div key={p.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 flex items-start justify-between gap-4">
+                                <div className="space-y-1.5 flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-bold text-[#0F6252] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded">
+                                      {p.tema_codigo}
+                                    </span>
+                                    <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded">
+                                      Opción correcta: {p.respuesta_correcta?.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs font-semibold text-slate-900 dark:text-white leading-snug">
+                                    {idx + 1}. {p.enunciado}
+                                  </p>
+                                  {p.justificacion && (
+                                    <p className="text-[11px] text-slate-500 italic truncate">
+                                      Justificación: {p.justificacion}
+                                    </p>
+                                  )}
+                                </div>
+                                
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => setPreguntaEnEdicion(p)}
+                                    className="px-2.5 py-1.5 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700"
+                                  >
+                                    ✏️ Editar
+                                  </button>
+                                  <button
+                                    onClick={() => handleBorrarPreguntaIndividual(p.id)}
+                                    className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg text-xs"
+                                    title="Eliminar pregunta"
+                                  >
+                                    🗑️
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* MODAL DE EDICIÓN / ALTA DE PREGUNTA */}
+                    {preguntaEnEdicion && (
+                      <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                        <form onSubmit={handleGuardarPreguntaEditada} className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                            <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                              {preguntaEnEdicion.id ? "Editar Pregunta" : "Añadir Nueva Pregunta"}
+                            </h3>
+                            <button type="button" onClick={() => setPreguntaEnEdicion(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Tema Oficial</label>
+                              <select
+                                value={preguntaEnEdicion.tema_codigo}
+                                onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, tema_codigo: e.target.value})}
+                                className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                                required
+                              >
+                                {TEMARIO_OFICIAL_60.map(t => (
+                                  <option key={t.codigo} value={t.codigo}>{t.codigo} — {t.titulo.substring(0, 40)}...</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Opción Correcta</label>
+                              <select
+                                value={preguntaEnEdicion.respuesta_correcta}
+                                onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, respuesta_correcta: e.target.value})}
+                                className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-bold"
+                              >
+                                <option value="a">A</option>
+                                <option value="b">B</option>
+                                <option value="c">C</option>
+                                <option value="d">D</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Enunciado de la pregunta</label>
+                            <textarea
+                              rows={3}
+                              value={preguntaEnEdicion.enunciado}
+                              onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, enunciado: e.target.value})}
+                              placeholder="Escribe el enunciado..."
+                              className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                              required
+                            />
+                          </div>
+
+                          {['a', 'b', 'c', 'd'].map(opt => (
+                            <div key={opt}>
+                              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1 uppercase">Opción {opt}</label>
+                              <input
+                                type="text"
+                                value={preguntaEnEdicion[`opcion_${opt}`] || ''}
+                                onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, [`opcion_${opt}`]: e.target.value})}
+                                placeholder={`Texto de la respuesta ${opt.toUpperCase()}...`}
+                                className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                                required
+                              />
+                            </div>
+                          ))}
+
+                          <div>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Evidencia / Justificación Jurídica</label>
+                            <textarea
+                              rows={2}
+                              value={preguntaEnEdicion.justificacion || ''}
+                              onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, justificacion: e.target.value})}
+                              placeholder="Artículo de ley o norma de referencia..."
+                              className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setPreguntaEnEdicion(null)}
+                              className="px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              className="px-5 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white rounded-xl font-bold"
+                            >
+                              Guardar en Supabase
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+
+                    {/* MODAL PARA CREAR NUEVO EXAMEN */}
+                    {modalNuevoExamen && (
+                      <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                        <form onSubmit={handleCrearExamenNuevo} className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 text-xs">
+                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white">Crear Nuevo Examen / Convocatoria</h3>
+                          
+                          <div>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Título del Examen</label>
+                            <input
+                              type="text"
+                              value={nuevoExamenForm.titulo}
+                              onChange={e => setNuevoExamenForm({...nuevoExamenForm, titulo: e.target.value})}
+                              placeholder="Ej: OEP 2021 — Auxiliar de Archivo"
+                              className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                              required
+                            />
+                          </div>
+
+                          <div>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Organismo</label>
+                            <input
+                              type="text"
+                              value={nuevoExamenForm.organismo}
+                              onChange={e => setNuevoExamenForm({...nuevoExamenForm, organismo: e.target.value})}
+                              placeholder="Ej: Diputación Provincial de Sevilla"
+                              className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                              required
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Año</label>
+                              <input
+                                type="number"
+                                value={nuevoExamenForm.año}
+                                onChange={e => setNuevoExamenForm({...nuevoExamenForm, año: parseInt(e.target.value) || 2023})}
+                                className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                                required
+                              />
+                            </div>
+                            <div>
+                              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Categoría</label>
+                              <select
+                                value={nuevoExamenForm.categoria}
+                                onChange={e => setNuevoExamenForm({...nuevoExamenForm, categoria: e.target.value})}
+                                className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
+                              >
+                                <option value="Oficial">Oficial</option>
+                                <option value="Simulacro">Simulacro</option>
+                                <option value="Academia">Academia</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setModalNuevoExamen(false)}
+                              className="px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              className="px-5 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white rounded-xl font-bold"
+                            >
+                              Crear Examen
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 5. LEYES */}
+                {/* 6. LEYES Y NORMAS (LE) */}
                 {moduloActivo === "leyes" && (
                   <div className="space-y-4">
                     <div>
@@ -970,7 +1635,23 @@
                             <h4 className="font-bold text-xs text-slate-900 dark:text-white mb-1">{ley.nombre}</h4>
                             <p className="text-xs text-slate-500">{ley.arts} artículos indexados</p>
                           </div>
-                          <button onClick={() => iniciarExamen()} className="mt-3.5 w-full py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
+                          <button 
+                            onClick={async () => {
+                              const todas = await ExamenService.obtenerTodasLasPreguntas();
+                              if (todas.length > 0) {
+                                setPreguntasTest(todas.map((p, idx) => normalizarPregunta(p, idx)));
+                                setTituloExamenActivo(`Test Ley: ${ley.codigo}`);
+                                setIndicePregunta(0);
+                                setRespuestas({});
+                                setSegundos(todas.length * 90);
+                                setExamenCorregido(false);
+                                setExamenActivo(true);
+                              } else {
+                                alert("No hay preguntas registradas todavía.");
+                              }
+                            }} 
+                            className="mt-3.5 w-full py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition"
+                          >
                             Hacer test de esta ley →
                           </button>
                         </div>
@@ -979,7 +1660,7 @@
                   </div>
                 )}
 
-                {/* 6. OTROS */}
+                {/* 7. OTROS EXÁMENES (OT) */}
                 {moduloActivo === "otros" && (
                   <div className="space-y-4">
                     <div>
@@ -989,132 +1670,138 @@
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center">
                       <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center mx-auto mb-2 font-bold text-xs">OT</div>
                       <h3 className="font-bold text-sm text-slate-900 dark:text-white">Bandeja de otros materiales</h3>
-                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">Puedes cargar exámenes de editoriales independientes desde la zona de incorporación.</p>
-                      <button onClick={() => setModuloActivo("ingesta")} className="px-4 py-2 bg-[#7B1FA2] text-white text-xs font-bold rounded-xl">
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">Puedes cargar exámenes de editoriales independientes desde la zona de gestión.</p>
+                      <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#7B1FA2] text-white text-xs font-bold rounded-xl">
                         Subir examen de academia →
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* 7. ERRORES */}
+                {/* 8. CUADERNO DE ERRORES (RE) */}
                 {moduloActivo === "errores" && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
                       <div>
                         <h2 className="text-lg font-bold text-slate-900 dark:text-white">Cuaderno de errores prioritario</h2>
-                        <p className="text-xs text-slate-500">Preguntas falladas en simulacros. Requieren 3 aciertos seguidos para desaparecer.</p>
+                        <p className="text-xs text-slate-500">Preguntas falladas registradas automáticamente en tus simulacros.</p>
                       </div>
-                      <button onClick={() => iniciarExamen()} className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition">
+                      <button 
+                        onClick={() => {
+                          if (fallosPendientes.length === 0) {
+                            alert("No tienes fallos registrados. ¡Buen trabajo!");
+                            return;
+                          }
+                          const preguntasFalladas = fallosPendientes
+                            .filter(f => f.preguntas)
+                            .map((f, idx) => normalizarPregunta(f.preguntas, idx));
+                          setPreguntasTest(preguntasFalladas);
+                          setTituloExamenActivo("Repaso de Errores");
+                          setIndicePregunta(0);
+                          setRespuestas({});
+                          setSegundos(preguntasFalladas.length * 90);
+                          setExamenCorregido(false);
+                          setExamenActivo(true);
+                        }} 
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition"
+                      >
                         Lanzar test de recuperación →
                       </button>
                     </div>
 
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
-                      {[
-                        { id: "e-1", enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto es expreso?", racha: "1/3 aciertos", fallos: 2, origen: "Dip. Sevilla 2023" },
-                        { id: "e-2", enunciado: "Las faltas muy graves prescriben según el TREBEP a los:", racha: "0/3 aciertos", fallos: 3, origen: "Tema COM-06" },
-                      ].map(err => (
-                        <div key={err.id} className="p-4 flex items-start justify-between gap-4">
-                          <div className="space-y-1">
-                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">{err.origen}</span>
-                            <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200">{err.enunciado}</h4>
-                            <div className="text-xs flex gap-3 text-slate-500 font-medium">
-                              <span className="text-rose-600 font-bold">{err.fallos} fallos acumulados</span>
-                              <span>•</span>
-                              <span className="text-amber-600 font-bold">Racha: {err.racha}</span>
+                    {fallosPendientes.length === 0 ? (
+                      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 p-8 text-center text-xs text-slate-400">
+                        No hay fallos registrados. Realiza un simulacro oficial en la sección OF para acumular estadísticas.
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
+                        {fallosPendientes.map((err, idx) => (
+                          <div key={err.id || idx} className="p-4 flex items-start justify-between gap-4">
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                                {err.preguntas?.tema_codigo || 'FALLO'}
+                              </span>
+                              <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200">{err.preguntas?.enunciado}</h4>
+                              <p className="text-[11px] text-rose-600 font-semibold">Respuesta correcta: {err.preguntas?.respuesta_correcta?.toUpperCase()}</p>
                             </div>
                           </div>
-                          <button onClick={() => iniciarExamen()} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition shrink-0">
-                            Practicar
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 8. RESULTADOS */}
+                {/* 9. RESULTADOS (MR) */}
                 {moduloActivo === "resultados" && (
                   <div className="space-y-4">
                     <div>
                       <h2 className="text-lg font-bold text-slate-900 dark:text-white">Histórico de Resultados y Simulacros</h2>
-                      <p className="text-xs text-slate-500">Métricas reales aplicando penalización (-0,33 pts por fallo).</p>
+                      <p className="text-xs text-slate-500">Métricas reales aplicando penalización oficial (-0,33 pts por fallo).</p>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
-                        <div className="text-2xl font-extrabold text-[#0F6252] dark:text-emerald-400">7,82</div>
-                        <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Nota media neta</div>
+                    {historialSimulacros.length === 0 ? (
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-2xl text-center text-xs text-slate-400">
+                        Aún no has completado simulacros. Completa uno en "Exámenes Oficiales" para ver tus estadísticas.
                       </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
-                        <div className="text-2xl font-extrabold text-blue-600">14</div>
-                        <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Simulacros hechos</div>
-                      </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
-                        <div className="text-2xl font-extrabold text-rose-500">2</div>
-                        <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Fallos pendientes</div>
-                      </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
-                        <div className="text-2xl font-extrabold text-slate-700 dark:text-slate-300">82%</div>
-                        <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Tasa de acierto</div>
-                      </div>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
+                            <div className="text-2xl font-extrabold text-[#0F6252] dark:text-emerald-400">
+                              {(historialSimulacros.reduce((acc, h) => acc + Number(h.puntuacion_neta), 0) / historialSimulacros.length).toFixed(2)}
+                            </div>
+                            <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Nota media neta</div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
+                            <div className="text-2xl font-extrabold text-blue-600">{historialSimulacros.length}</div>
+                            <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Simulacros hechos</div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
+                            <div className="text-2xl font-extrabold text-rose-500">{fallosPendientes.length}</div>
+                            <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Fallos registrados</div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl text-center">
+                            <div className="text-2xl font-extrabold text-slate-700 dark:text-slate-300">
+                              {Math.round((historialSimulacros.reduce((acc, h) => acc + h.aciertos, 0) / Math.max(1, historialSimulacros.reduce((acc, h) => acc + h.total_preguntas, 0))) * 100)}%
+                            </div>
+                            <div className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Tasa de acierto</div>
+                          </div>
+                        </div>
 
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold">
-                            <th className="p-3">Simulacro</th>
-                            <th className="p-3 text-center">Aciertos</th>
-                            <th className="p-3 text-center">Fallos</th>
-                            <th className="p-3 text-center">En blanco</th>
-                            <th className="p-3 text-center">Nota Neta</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                          <tr>
-                            <td className="p-3 font-semibold text-slate-800 dark:text-slate-200">Dip. Sevilla 2023 — Intento 1</td>
-                            <td className="p-3 text-center text-emerald-600 font-bold">84</td>
-                            <td className="p-3 text-center text-rose-500 font-bold">12</td>
-                            <td className="p-3 text-center text-slate-400">4</td>
-                            <td className="p-3 text-center text-[#0F6252] dark:text-emerald-400 font-extrabold text-sm">8,00</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
+                        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold">
+                                <th className="p-3">Fecha y Hora</th>
+                                <th className="p-3 text-center">Aciertos</th>
+                                <th className="p-3 text-center">Fallos</th>
+                                <th className="p-3 text-center">Blancos</th>
+                                <th className="p-3 text-center">Nota Neta</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                              {historialSimulacros.map(h => (
+                                <tr key={h.id}>
+                                  <td className="p-3 font-semibold text-slate-800 dark:text-slate-200">
+                                    {new Date(h.created_at).toLocaleString()}
+                                  </td>
+                                  <td className="p-3 text-center text-emerald-600 font-bold">{h.aciertos}</td>
+                                  <td className="p-3 text-center text-rose-500 font-bold">{h.fallos}</td>
+                                  <td className="p-3 text-center text-slate-400">{h.blancos}</td>
+                                  <td className="p-3 text-center text-[#0F6252] dark:text-emerald-400 font-extrabold text-sm">
+                                    {h.puntuacion_neta} / {h.total_preguntas}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
-                {/* 9. GESTIÓN AVANZADA */}
-                {moduloActivo === "gestion" && (
-                  <div className="space-y-4">
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Gestión Avanzada</h2>
-                      <p className="text-xs text-slate-500">Mantenimiento de preguntas, borrado masivo y copias de seguridad.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-2">
-                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">Depuración de Banco</h4>
-                        <p className="text-xs text-slate-500">Permite eliminar preguntas anuladas o exámenes completos que ya no te interesen.</p>
-                        <button onClick={() => alert("Banco optimizado.")} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl">
-                          Depurar preguntas huérfanas
-                        </button>
-                      </div>
-
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-2">
-                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">Copia de Seguridad</h4>
-                        <p className="text-xs text-slate-500">Descarga todo tu histórico de intentos y preguntas en formato JSON.</p>
-                        <button onClick={() => alert("Copia descargada.")} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl">
-                          Exportar base de datos
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 10. AYUDA */}
+                {/* 10. AYUDA (AY) */}
                 {moduloActivo === "ayuda" && (
                   <div className="space-y-4">
                     <div>
@@ -1141,7 +1828,7 @@
 
                       <h4 className="font-bold text-xs text-[#0F6252] dark:text-emerald-400 pt-2">FÓRMULA DE PUNTUACIÓN</h4>
                       <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-                        Puntuación Neta = Aciertos - (Fallos × 0,333). Las preguntas dejadas en blanco no restan puntuación.
+                        Puntuación Neta = Aciertos - (Fallos × 0,33). Las preguntas dejadas en blanco no restan puntuación.
                       </p>
                     </div>
                   </div>
