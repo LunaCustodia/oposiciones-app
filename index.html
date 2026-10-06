@@ -53,7 +53,7 @@
     const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
     // =========================================================================
-    // SERVICIO DE BASE DE DATOS (SUPABASE)
+    // SERVICIO DE ACCESO A BASE DE DATOS (SUPABASE)
     // =========================================================================
     const ExamenService = {
       async obtenerExamenes() {
@@ -520,10 +520,11 @@
       };
 
       // =======================================================================
-      // PROCESADO INTELIGENTE DEL PDF MEDIANTE VISIÓN MULTIMODAL
+      // PROCESADO INTELIGENTE DEL PDF MEDIANTE VISIÓN MULTIMODAL CON DETECCIÓN DINÁMICA
       // =======================================================================
       const procesarExamenConVision = async () => {
-        if (!apiKeyGemini.trim()) {
+        const keyLimpia = apiKeyGemini.trim();
+        if (!keyLimpia) {
           alert("Por favor introduce tu clave API de Google AI Studio.");
           return;
         }
@@ -533,12 +534,37 @@
           return;
         }
 
-        localStorage.setItem("gemini_api_key", apiKeyGemini.trim());
+        localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
-        setMensajeEstado("Leyendo documento y preparando visión artificial...");
+        setMensajeEstado("Verificando modelos disponibles en tu cuenta de Google AI...");
 
         try {
-          // 1. Convertir archivo a Base64
+          // 1. Detección automática del modelo activo en Google AI
+          const modelsRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyLimpia}`);
+          if (!modelsRes.ok) {
+            const errD = await modelsRes.json();
+            throw new Error(errD?.error?.message || "Clave API incorrecta o no válida.");
+          }
+          const modelsData = await modelsRes.json();
+          const lista = modelsData.models || [];
+
+          // Seleccionar el mejor modelo Flash que soporte generateContent
+          const modeloElegido = lista.find(m => 
+            m.supportedGenerationMethods?.includes('generateContent') && 
+            /gemini.*flash/i.test(m.name)
+          ) || lista.find(m => 
+            m.supportedGenerationMethods?.includes('generateContent') && 
+            /gemini/i.test(m.name)
+          );
+
+          if (!modeloElegido) {
+            throw new Error("No se encontró ningún modelo Gemini disponible para tu clave.");
+          }
+
+          const modelName = modeloElegido.name; // Ej: "models/gemini-2.0-flash" o "models/gemini-2.5-flash"
+          setMensajeEstado(`Cargando documento y enviando al motor (${modelName.replace('models/', '')})...`);
+
+          // 2. Convertir PDF a Base64
           const base64Pdf = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => {
@@ -550,7 +576,7 @@
             reader.readAsDataURL(archivoPdf);
           });
 
-          setMensajeEstado("Analizando examen completo y detectando soluciones oficiales...");
+          setMensajeEstado("Analizando examen visualmente y desglosando preguntas y opciones...");
 
           const promptInstrucciones = `
 Eres un asistente experto en oposiciones de Archivos y Bibliotecas.
@@ -579,7 +605,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
 ]
 `;
 
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyGemini.trim()}`;
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${keyLimpia}`;
 
           const payload = {
             contents: [
@@ -587,8 +613,8 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                 parts: [
                   { text: promptInstrucciones },
                   {
-                    inline_data: {
-                      mime_type: "application/pdf",
+                    inlineData: {
+                      mimeType: "application/pdf",
                       data: base64Pdf
                     }
                   }
@@ -596,7 +622,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
               }
             ],
             generationConfig: {
-              response_mime_type: "application/json"
+              responseMimeType: "application/json"
             }
           };
 
@@ -608,7 +634,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
 
           if (!respuesta.ok) {
             const errData = await respuesta.json();
-            throw new Error(errData?.error?.message || "Error en la petición a la API");
+            throw new Error(errData?.error?.message || "Error en la petición a Google AI");
           }
 
           const resultadoJson = await respuesta.json();
@@ -618,13 +644,20 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
             throw new Error("No se recibió respuesta válida del motor de visión.");
           }
 
-          const preguntasParseadas = JSON.parse(textoRespuesta);
+          let rawText = textoRespuesta.trim();
+          if (rawText.startsWith('```json')) {
+            rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+          } else if (rawText.startsWith('```')) {
+            rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+          }
+
+          const preguntasParseadas = JSON.parse(rawText);
           if (!Array.isArray(preguntasParseadas) || preguntasParseadas.length === 0) {
-            throw new Error("No se detectaron preguntas en el formato esperado.");
+            throw new Error("No se detectaron preguntas en el examen.");
           }
 
           setPreguntasExtraidas(preguntasParseadas);
-          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
+          setMensajeEstado(`¡Completado con éxito! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
         } catch (err) {
           console.error("Error en extracción:", err);
           alert("Error procesando el PDF: " + err.message);
@@ -786,7 +819,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
         if (!confirm("¿Eliminar esta pregunta definitivamente?")) return;
         try {
           await ExamenService.eliminarPregunta(preguntaId);
-          setPreguntasGA(prev => prev.filter(p => p.id !== preguntaId));
+          setPreguntasGA(prev => prev.filter(p => p.id !== personaId));
           await recargarExamenes();
         } catch (err) {
           alert("Error eliminando pregunta: " + err.message);
@@ -1364,9 +1397,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                   </div>
                 )}
 
-                {/* ============================================================= */}
-                {/* 4. INCORPORAR UN EXAMEN (IN) — MOTOR CON VISIÓN MULTIMODAL */}
-                {/* ============================================================= */}
+                {/* 4. INCORPORAR UN EXAMEN (IN) */}
                 {moduloActivo === "ingesta" && (
                   <div className="space-y-6">
                     <div>
@@ -1374,11 +1405,10 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                         Incorporar un examen oficial
                       </h1>
                       <p className="text-xs text-slate-500 mt-1">
-                        Sube cualquier PDF de convocatoria (incluso con fuentes corruptas, escaneado o a dos columnas). El motor visual detectará preguntas, opciones y plantillas automáticamente.
+                        Sube cualquier PDF de convocatoria. El motor visual detectará preguntas, opciones y plantillas automáticamente.
                       </p>
                     </div>
 
-                    {/* Paso 0: Clave de Google AI Studio */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-3">
                       <div className="flex items-center justify-between">
                         <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
@@ -1405,7 +1435,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                       />
                     </div>
 
-                    {/* Paso 1: Datos del examen */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
                         2. Datos de la convocatoria
@@ -1453,7 +1482,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                       </div>
                     </div>
 
-                    {/* Paso 2: Selección y procesamiento */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
                         3. Cuestionario en PDF
@@ -1476,7 +1504,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                           disabled={!archivoPdf || procesandoVision}
                           className="px-6 py-3 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
                         >
-                          {procesandoVision ? "Analizando páginas con visión..." : "⚡ Procesar examen con visión artificial"}
+                          {procesandoVision ? "Procesando examen..." : "⚡ Procesar examen con visión artificial"}
                         </button>
                       </div>
 
@@ -1487,7 +1515,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                       )}
                     </div>
 
-                    {/* Paso 3: Resultados detectados y guardado */}
                     {preguntasExtraidas.length > 0 && (
                       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-3">
@@ -1509,7 +1536,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                           </button>
                         </div>
 
-                        {/* Lista de preguntas extraídas con opciones */}
                         <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
                           {preguntasExtraidas.map((p, idx) => (
                             <div key={idx} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs space-y-2 bg-white dark:bg-slate-900">
@@ -1561,7 +1587,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                   </div>
                 )}
 
-                {/* 5. GESTIÓN AVANZADA (GA) */}
                 {moduloActivo === "gestion" && (
                   <div className="space-y-6">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -1604,7 +1629,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
                                 className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold px-2.5 py-1.5 border border-rose-200 dark:border-rose-900 rounded-xl transition flex items-center gap-1 shrink-0"
                                 title="Eliminar examen completo y todas sus preguntas"
                               >
-                                🗑️️ Borrar examen
+                                🗑 Borrar examen
                               </button>
                             </div>
 
