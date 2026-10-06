@@ -34,17 +34,62 @@
     .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 antialiased select-none dark:bg-slate-950 dark:text-slate-100">
+<body class="bg-[#F8FAFB] text-slate-900 antialiased select-none dark:bg-slate-950 dark:text-slate-100">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useCallback } = React;
 
-    // BANCO DEMO INICIAL CON FUENTES
-    const BANCO_DEMO = [
+    // =========================================================================
+    // DATOS CANÓNICOS DEL TEMARIO Y BANCO DE PREGUNTAS (60 TEMAS)
+    // =========================================================================
+
+    const TEMARIO_60 = [
+      // 12 Temas Comunes
+      { id: 1, bloque: "Común", titulo: "La Constitución Española de 1978: estructura y principios generales.", preguntas: 42 },
+      { id: 2, bloque: "Común", titulo: "Derechos y deberes fundamentales en la Constitución Española.", preguntas: 38 },
+      { id: 3, bloque: "Común", titulo: "La Corona. Las Cortes Generales: Congreso y Senado.", preguntas: 25 },
+      { id: 4, bloque: "Común", titulo: "El Gobierno y la Administración. Relaciones entre el Gobierno y las Cortes.", preguntas: 31 },
+      { id: 5, bloque: "Común", titulo: "El Poder Judicial. Principios constitucionales y organización.", preguntas: 22 },
+      { id: 6, bloque: "Común", titulo: "La organización territorial del Estado: las Comunidades Autónomas.", preguntas: 34 },
+      { id: 7, bloque: "Común", titulo: "El Estatuto de Autonomía de Andalucía: competencias e instituciones.", preguntas: 29 },
+      { id: 8, bloque: "Común", titulo: "Régimen Local Español: regulación y principios constitucionales.", preguntas: 45 },
+      { id: 9, bloque: "Común", titulo: "La Provincia en el régimen local: organización y competencias de las Diputaciones.", preguntas: 50 },
+      { id: 10, bloque: "Común", titulo: "El Municipio: territorio, población y competencias municipales.", preguntas: 48 },
+      { id: 11, bloque: "Común", titulo: "El procedimiento administrativo común (Ley 39/2015): fases y plazos.", preguntas: 62 },
+      { id: 12, bloque: "Común", titulo: "El personal al servicio de las Administraciones Públicas (TREBEP): derechos y deberes.", preguntas: 54 },
+      
+      // Muestra de los 48 Temas Específicos (Archivos y Bibliotecas)
+      { id: 13, bloque: "Específico", titulo: "Concepto de documento de archivo. El ciclo vital de los documentos.", preguntas: 30 },
+      { id: 14, bloque: "Específico", titulo: "El principio de procedencia y orden original: desarrollo y aplicación.", preguntas: 28 },
+      { id: 15, bloque: "Específico", titulo: "Identificación y valoración documental: comisiones calificadoras.", preguntas: 33 },
+      { id: 16, bloque: "Específico", titulo: "Selección, eliminación y expurgo documental en archivos públicos.", preguntas: 27 },
+      { id: 17, bloque: "Específico", titulo: "Cuadro de clasificación de fondos en archivos municipales y provinciales.", preguntas: 35 },
+      { id: 18, bloque: "Específico", titulo: "La descripción archivística: normas internacionales ISAD(G) e ISAAR(CPF).", preguntas: 40 },
+      { id: 19, bloque: "Específico", titulo: "Instrumentos de descripción: guías, inventarios, catálogos e índices.", preguntas: 32 },
+      { id: 20, bloque: "Específico", titulo: "El archivo electrónico único en las Administraciones Locales (ENI).", preguntas: 26 },
+      { id: 21, bloque: "Específico", titulo: "Conservación preventiva y restauración de documentos en soporte tradicional.", preguntas: 24 },
+      { id: 22, bloque: "Específico", titulo: "Acceso a los documentos de archivo: transparencia y protección de datos.", preguntas: 37 },
+      { id: 23, bloque: "Específico", titulo: "El Sistema Andaluz de Archivos (Ley 7/2011 de Documentos y Archivos de Andalucía).", preguntas: 44 },
+      { id: 24, bloque: "Específico", titulo: "Historia y fondos documentales de la administración local en Andalucía.", preguntas: 21 },
+      { id: 25, bloque: "Específico", titulo: "Concepto y función social de la biblioteca pública en el ámbito local.", preguntas: 19 },
+      { id: 26, bloque: "Específico", titulo: "Proceso técnico bibliotecario: catalogación, RDA y clasificación CDU.", preguntas: 25 },
+      { id: 27, bloque: "Específico", titulo: "Preservación digital en archivos y bibliotecas: estándares y formatos.", preguntas: 22 },
+      { id: 28, bloque: "Específico", titulo: "Servicios al usuario y difusión cultural en centros archivísticos.", preguntas: 18 }
+    ];
+
+    const EXAMENES_OFICIALES = [
+      { id: "of-1", titulo: "Diputación Provincial de Sevilla — Auxiliar de Archivos", anio: 2023, preguntas: 100, reservas: 5, penalizacion: "-0,33 pts" },
+      { id: "of-2", titulo: "Ayuntamiento de Sevilla — Ayudante de Biblioteca", anio: 2022, preguntas: 80, reservas: 4, penalizacion: "-0,25 pts" },
+      { id: "of-3", titulo: "Diputación Provincial de Córdoba — Técnico Auxiliar Archivo", anio: 2023, preguntas: 90, reservas: 5, penalizacion: "-0,33 pts" },
+      { id: "of-4", titulo: "Junta de Andalucía — Cuerpo Auxiliar Administrativo", anio: 2021, preguntas: 105, reservas: 5, penalizacion: "-0,33 pts" }
+    ];
+
+    const BANCO_PREGUNTAS = [
       {
         id: "p1",
         origen: "oficial",
+        temaId: 11,
         numero_orden: 1,
         enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto administrativo fuera expreso según la Ley 39/2015?",
         evidencia_texto: "Art. 124.1 Ley 39/2015: El plazo para la interposición del recurso de reposición será de un mes, si el acto fuera expreso. Transcurrido dicho plazo, únicamente podrá interponerse recurso contencioso-administrativo.",
@@ -58,18 +103,50 @@
       {
         id: "p2",
         origen: "temario",
-        tema: "Tema 14",
+        temaId: 14,
         numero_orden: 2,
-        enunciado: "Según el principio archivístico de procedencia o respeto al origen de los fondos:",
-        evidencia_texto: "Tema 14 Archivos: Los documentos producidos por una institución u organismo no deben mezclarse con los producidos por otra.",
+        enunciado: "Según el principio archivístico de procedencia o respeto al origen de los fondos documentales:",
+        evidencia_texto: "Tema 14 Archivos: Los documentos producidos por una institución u organismo no deben mezclarse bajo ningún concepto con los producidos por otra entidad u organismo productor.",
         opciones: [
           { id: "o5", letra: "A", texto: "Los expedientes deben clasificarse por orden cronológico estricto independientemente del productor.", es_correcta: false },
           { id: "o6", letra: "B", texto: "Los documentos de cada fondo deben mantenerse agrupados sin mezclarse con otros.", es_correcta: true },
           { id: "o7", letra: "C", texto: "Los documentos históricos pasan directamente a expurgo a los 10 años.", es_correcta: false },
-          { id: "o8", letra: "D", texto: "Solo se aplica a la documentación generada en soporte papel.", es_correcta: false }
+          { id: "o8", letra: "D", texto: "Solo se aplica a la documentación generada en soporte papel tradicional.", es_correcta: false }
+        ]
+      },
+      {
+        id: "p3",
+        origen: "oficial",
+        temaId: 9,
+        numero_orden: 3,
+        enunciado: "Conforme al artículo 33 de la Ley 7/1985 (LBRL), ¿a quién corresponde la presidencia de la Diputación Provincial?",
+        evidencia_texto: "Art. 33 LBRL: El Presidente de la Diputación es elegido por los Diputados Provinciales de entre ellos en la sesión constitutiva de la corporación.",
+        opciones: [
+          { id: "o9", letra: "A", texto: "Es designado directamente por el Delegado del Gobierno en la Comunidad Autónoma.", es_correcta: false },
+          { id: "o10", letra: "B", texto: "Es elegido por los Diputados Provinciales de entre ellos en la sesión constitutiva.", es_correcta: true },
+          { id: "o11", letra: "C", texto: "Al Alcalde del municipio con mayor censo electoral de la provincia.", es_correcta: false },
+          { id: "o12", letra: "D", texto: "Por sufragio universal directo de todos los vecinos de los municipios de la provincia.", es_correcta: false }
+        ]
+      },
+      {
+        id: "p4",
+        origen: "leyes",
+        temaId: 12,
+        numero_orden: 4,
+        enunciado: "De acuerdo con el Real Decreto Legislativo 5/2015 (TREBEP), las faltas muy graves prescriben a los:",
+        evidencia_texto: "Art. 97 TREBEP: Las infracciones muy graves prescribirán a los 3 años, las graves a los 2 años y las leves a los 6 meses.",
+        opciones: [
+          { id: "o13", letra: "A", texto: "Dos años desde su comisión.", es_correcta: false },
+          { id: "o14", letra: "B", texto: "Tres años desde su comisión.", es_correcta: true },
+          { id: "o15", letra: "C", texto: "Cuatro años improrrogables.", es_correcta: false },
+          { id: "o16", letra: "D", texto: "Seis meses en cualquier caso.", es_correcta: false }
         ]
       }
     ];
+
+    // =========================================================================
+    // COMPONENTE PRINCIPAL
+    // =========================================================================
 
     function App() {
       // Estado de Autenticación
@@ -78,36 +155,38 @@
       const [passwordInput, setPasswordInput] = useState("");
       const [errorLogin, setErrorLogin] = useState("");
 
-      // Módulo activo
-      const [moduloActivo, setModuloActivo] = useState("inicio"); // inicio, oficiales, temario, leyes, otros, errores, resultados, materiales
+      // Módulo activo en la barra lateral
+      const [moduloActivo, setModuloActivo] = useState("inicio");
       const [modoOscuro, setModoOscuro] = useState(false);
 
-      // Sala de examen activa
+      // Estado de la Sala de Examen
       const [examenActivo, setExamenActivo] = useState(false);
-      const [preguntasTest, setPreguntasTest] = useState(BANCO_DEMO);
+      const [preguntasTest, setPreguntasTest] = useState(BANCO_PREGUNTAS);
       const [indicePregunta, setIndicePregunta] = useState(0);
       const [respuestas, setRespuestas] = useState({});
       const [segundos, setSegundos] = useState(3600);
       const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
       const [examenCorregido, setExamenCorregido] = useState(false);
 
-      // Gestión de tema oscuro
+      // Filtros de vistas
+      const [filtroBloqueTemario, setFiltroBloqueTemario] = useState("todos");
+      const [stagingArchivos, setStagingArchivos] = useState([]);
+
+      // Modo oscuro toggle
       useEffect(() => {
         if (modoOscuro) document.documentElement.classList.add("dark");
         else document.documentElement.classList.remove("dark");
       }, [modoOscuro]);
 
-      // Control de acceso
       const handleLogin = (e) => {
         e.preventDefault();
         if (!passwordInput.trim()) {
-          setErrorLogin("Introduce tu contraseña de acceso.");
+          setErrorLogin("Introduce tu contraseña.");
           return;
         }
         setAutenticado(true);
         localStorage.setItem("auth_session", "true");
         localStorage.setItem("auth_email", emailInput);
-        setErrorLogin("");
       };
 
       const handleLogout = () => {
@@ -116,13 +195,9 @@
         setExamenActivo(false);
       };
 
-      // Iniciar test con filtro
-      const iniciarTest = (filtroTipo) => {
-        let filtradas = BANCO_DEMO;
-        if (filtroTipo !== "todos") {
-          filtradas = BANCO_DEMO.filter(p => p.origen === filtroTipo);
-        }
-        setPreguntasTest(filtradas.length > 0 ? filtradas : BANCO_DEMO);
+      // Iniciar Examen con filtro
+      const iniciarExamen = (preguntasAUsar = BANCO_PREGUNTAS) => {
+        setPreguntasTest(preguntasAUsar.length > 0 ? preguntasAUsar : BANCO_PREGUNTAS);
         setIndicePregunta(0);
         setRespuestas({});
         setSegundos(3600);
@@ -131,22 +206,19 @@
       };
 
       // ----------------------------------------------------------------------
-      // VISTA 1: ACCESO PRIVADO (Login de la Captura 1)
+      // VISTA 1: ACCESO PRIVADO
       // ----------------------------------------------------------------------
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
             <div className="w-full max-w-[390px] bg-white rounded-3xl p-7 shadow-sm border border-slate-200/80">
-              
               <div className="inline-block px-3 py-1 rounded-full bg-[#E5F5F0] text-[#0F6252] font-mono text-[11px] font-bold tracking-wider mb-5">
                 ACCESO PRIVADO
               </div>
-
               <h1 className="text-2xl font-black text-slate-900 tracking-tight">OposiTest</h1>
               <p className="text-xs text-slate-500 font-medium mt-1 mb-6">
                 Ayudante de Archivo y Biblioteca · OEP 2023
               </p>
-
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-800 mb-1.5">Correo electrónico</label>
@@ -155,10 +227,9 @@
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
                     required
-                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#E59833] focus:ring-2 focus:ring-[#E59833]/30 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none transition"
+                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#E59833] rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none"
                   />
                 </div>
-
                 <div>
                   <label className="block text-xs font-semibold text-slate-800 mb-1.5">Contraseña</label>
                   <input
@@ -167,14 +238,10 @@
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     required
-                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#0F6252] focus:ring-2 focus:ring-[#0F6252]/20 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none transition"
+                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#0F6252] rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none"
                   />
                 </div>
-
-                {errorLogin && (
-                  <p className="text-[11px] text-rose-600 font-medium">{errorLogin}</p>
-                )}
-
+                {errorLogin && <p className="text-[11px] text-rose-600 font-medium">{errorLogin}</p>}
                 <button
                   type="submit"
                   className="w-full bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-xs py-3 rounded-xl transition shadow-xs mt-2"
@@ -182,10 +249,9 @@
                   Entrar
                 </button>
               </form>
-
               <div className="text-center mt-6">
                 <button
-                  onClick={() => alert("Restablecimiento no configurado. Acceso exclusivo local.")}
+                  onClick={() => alert("Acceso exclusivo configurado para tu usuario.")}
                   className="text-xs font-semibold text-[#0F6252] hover:underline"
                 >
                   He olvidado mi contraseña
@@ -197,7 +263,7 @@
       }
 
       // ----------------------------------------------------------------------
-      // VISTA 2: SALA DE EXAMEN COMPACTA
+      // VISTA 2: SALA DE EXAMEN INTERACTIVA
       // ----------------------------------------------------------------------
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
@@ -219,6 +285,12 @@
           }));
         };
 
+        const formatTiempo = (s) => {
+          const m = Math.floor(s / 60);
+          const sec = s % 60;
+          return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+        };
+
         return (
           <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
             <header className="h-11 bg-slate-950 border-b border-slate-800 px-4 flex items-center justify-between font-mono text-xs">
@@ -232,332 +304,6 @@
                 <span className="font-bold text-slate-200">{Object.values(respuestas).filter(r => r.opcion_id).length}/{preguntasTest.length}</span>
                 <span className="text-slate-600">|</span>
                 <span className="text-amber-400">⚑ {Object.values(respuestas).filter(r => r.dudosa).length}</span>
+                <span className="text-slate-600">|</span>
+                <span className="text-slate-300 font-bold">{formatTiempo(segundos)}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setMostrarEvidencia(v => !v)}
-                  className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900 text-[11px] text-slate-300"
-                >
-                  Evidencia [E]
-                </button>
-                <button
-                  onClick={() => setExamenCorregido(true)}
-                  className="px-2.5 py-1 rounded bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-[11px]"
-                >
-                  Finalizar
-                </button>
-              </div>
-            </header>
-
-            <main className="flex-1 max-w-3xl mx-auto w-full p-4 md:p-6 flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-xs font-mono text-slate-400">
-                  <span>PREGUNTA {p.numero_orden} DE {preguntasTest.length}</span>
-                  <button onClick={toggleDuda} className="text-amber-400 hover:underline">
-                    {resp?.dudosa ? '★ Dudosa marcada' : '☆ Marcar dudosa'}
-                  </button>
-                </div>
-                <h2 className="text-sm md:text-base font-medium text-white leading-relaxed">{p.enunciado}</h2>
-                <div className="space-y-2 pt-2">
-                  {p.opciones.map(op => {
-                    const sel = resp?.opcion_id === op.id;
-                    let cls = 'border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-800/60';
-                    if (examenCorregido) {
-                      if (op.es_correcta) cls = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
-                      else if (sel) cls = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
-                    } else if (sel) {
-                      cls = 'border-[#0F6252] bg-[#0F6252]/20 text-white font-semibold';
-                    }
-
-                    return (
-                      <button
-                        key={op.id}
-                        onClick={() => responder(op.id, op.letra)}
-                        className={`w-full text-left p-2.5 rounded-lg border text-xs flex items-start gap-2.5 transition ${cls}`}
-                      >
-                        <span className="font-mono font-bold px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 text-[11px]">{op.letra}</span>
-                        <span>{op.texto}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-between">
-                <button
-                  disabled={indicePregunta === 0}
-                  onClick={() => setIndicePregunta(i => i - 1)}
-                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
-                >
-                  ← Anterior
-                </button>
-                <button
-                  disabled={indicePregunta === preguntasTest.length - 1}
-                  onClick={() => setIndicePregunta(i => i + 1)}
-                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
-                >
-                  Siguiente →
-                </button>
-              </div>
-            </main>
-
-            {mostrarEvidencia && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-                <div className="bg-slate-950 border border-slate-800 max-w-lg w-full p-4 rounded-xl space-y-3">
-                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                    <span className="text-xs font-mono font-bold text-slate-300">EVIDENCIA OFICIAL P.{p.numero_orden}</span>
-                    <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 font-mono">✕</button>
-                  </div>
-                  <p className="text-xs font-serif text-slate-200 leading-relaxed bg-slate-900 p-3 rounded border border-slate-800">
-                    {p.evidencia_texto}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      // ----------------------------------------------------------------------
-      // VISTA 3: DASHBOARD PRINCIPAL (Estructura de la Captura 2 con pestañas compactas)
-      // ----------------------------------------------------------------------
-      const navItems = [
-        { id: "inicio", sigla: "IN", label: "Inicio", color: "bg-[#0F6252] text-white" },
-        { id: "oficiales", sigla: "OF", label: "Exámenes oficiales", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "temario", sigla: "MT", label: "Mi temario", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "leyes", sigla: "LE", label: "Leyes y normas", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "otros", sigla: "OT", label: "Otros exámenes", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "errores", sigla: "RE", label: "Repasar errores", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "resultados", sigla: "MR", label: "Mis resultados", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "materiales", sigla: "MA", label: "Subir PDFs / Ingesta", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "gestion", sigla: "GA", label: "Gestión avanzada", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-        { id: "ayuda", sigla: "AY", label: "Ayuda y manual", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
-      ];
-
-      return (
-        <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950 font-sans">
-          
-          {/* BARRA LATERAL IZQUIERDA (Estilo idéntico a Captura 2) */}
-          <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
-            {/* Cabecera Sidebar */}
-            <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800/80">
-              <div className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                AB
-              </div>
-              <div className="leading-tight truncate">
-                <div className="font-bold text-xs text-slate-900 dark:text-white truncate">Archivo & Biblioteca</div>
-                <div className="text-[10px] text-slate-400 truncate">Tu espacio de estudio</div>
-              </div>
-            </div>
-
-            {/* Lista de Módulos */}
-            <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-              {navItems.map(item => {
-                const activo = moduloActivo === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setModuloActivo(item.id)}
-                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs font-medium transition text-left ${
-                      activo
-                        ? 'bg-[#EBF7F4] text-[#0F6252] font-semibold dark:bg-[#0F6252]/20 dark:text-emerald-300'
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60'
-                    }`}
-                  >
-                    <span className={`w-6 h-6 rounded flex items-center justify-center font-mono text-[10px] font-bold shrink-0 ${
-                      activo ? 'bg-[#0F6252] text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
-                    }`}>
-                      {item.sigla}
-                    </span>
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </aside>
-
-          {/* CONTENIDO PRINCIPAL */}
-          <div className="flex-1 flex flex-col min-w-0">
-            
-            {/* Barra Superior Header */}
-            <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-5 flex items-center justify-between shrink-0">
-              <div className="text-xs text-slate-500 font-medium capitalize">
-                {moduloActivo}
-              </div>
-
-              <div className="flex items-center gap-2 text-xs">
-                <button 
-                  onClick={() => setModuloActivo("resultados")}
-                  className="px-2.5 py-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 font-medium"
-                >
-                  Mis resultados
-                </button>
-                <button 
-                  onClick={() => alert("Manual de ayuda: selecciona un tipo de test o sube exámenes en PDF.")}
-                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
-                >
-                  <span>?</span> Ayuda
-                </button>
-                <button
-                  onClick={() => setModoOscuro(!modoOscuro)}
-                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
-                >
-                  ◑ {modoOscuro ? 'Claro' : 'Oscuro'}
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="px-3 py-1 bg-[#102A43] hover:bg-slate-900 text-white rounded-lg font-medium flex items-center gap-1 ml-1"
-                >
-                  <span>↩</span> Salir
-                </button>
-              </div>
-            </header>
-
-            {/* Área Central: Dashboard */}
-            <main className="flex-1 p-5 md:p-6 overflow-y-auto">
-              <div className="max-w-5xl mx-auto space-y-4">
-                
-                <div>
-                  <span className="font-mono text-[10px] font-bold text-[#0F6252] tracking-wider uppercase">INICIO</span>
-                  <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white tracking-tight mt-0.5">
-                    Tu espacio de estudio
-                  </h1>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Selecciona una categoría de test para entrenar o repasa tus fallos acumulados.
-                  </p>
-                </div>
-
-                {/* LOS 4 MÓDULOS DE EXAMEN (Diseño compacto sin espacios muertos) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-                  
-                  {/* Tarjeta 1: Oficiales */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
-                    <div>
-                      <div className="flex items-center justify-between mb-2.5">
-                        <span className="w-7 h-7 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">
-                          OF
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-semibold">
-                          Tribunal Oficial
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Exámenes oficiales</h3>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
-                        Exámenes reales de convocatorias con recortes de tribunal y soluciones publicadas.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => iniciarTest("oficiales")}
-                      className="mt-3 w-full py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition"
-                    >
-                      Practicar test →
-                    </button>
-                  </div>
-
-                  {/* Tarjeta 2: Temario */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
-                    <div>
-                      <div className="flex items-center justify-between mb-2.5">
-                        <span className="w-7 h-7 rounded-lg bg-[#3F51B5] text-white flex items-center justify-center font-bold text-xs font-mono">
-                          MT
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
-                          60 Temas
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Mi temario</h3>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
-                        12 temas comunes y 48 específicos con cita literal del párrafo del temario.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => iniciarTest("temario")}
-                      className="mt-3 w-full py-1.5 bg-[#3F51B5] hover:bg-[#303f9f] text-white text-xs font-semibold rounded-lg transition"
-                    >
-                      Test por temas →
-                    </button>
-                  </div>
-
-                  {/* Tarjeta 3: Leyes */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
-                    <div>
-                      <div className="flex items-center justify-between mb-2.5">
-                        <span className="w-7 h-7 rounded-lg bg-[#E65100] text-white flex items-center justify-center font-bold text-xs font-mono">
-                          LE
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">
-                          Legislación
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Leyes íntegras</h3>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
-                        Preguntas sobre plazos, órganos y competencias con cita exacta del artículo.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => iniciarTest("todos")}
-                      className="mt-3 w-full py-1.5 bg-[#E65100] hover:bg-[#c44400] text-white text-xs font-semibold rounded-lg transition"
-                    >
-                      Test de leyes →
-                    </button>
-                  </div>
-
-                  {/* Tarjeta 4: Otros exámenes */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
-                    <div>
-                      <div className="flex items-center justify-between mb-2.5">
-                        <span className="w-7 h-7 rounded-lg bg-[#7B1FA2] text-white flex items-center justify-center font-bold text-xs font-mono">
-                          OT
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[10px] font-semibold">
-                          Academias
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Otros exámenes</h3>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
-                        Test de editoriales, manuales y academias para complementar el estudio.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => iniciarTest("todos")}
-                      className="mt-3 w-full py-1.5 bg-[#7B1FA2] hover:bg-[#6a1b9a] text-white text-xs font-semibold rounded-lg transition"
-                    >
-                      Ver test →
-                    </button>
-                  </div>
-
-                </div>
-
-                {/* ACCESO RÁPIDO AL CUADERNO DE ERRORES */}
-                <div className="bg-[#EBF7F4] dark:bg-[#0F6252]/10 border border-[#b2dfd2] dark:border-[#0F6252]/40 rounded-xl p-3.5 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">
-                      RE
-                    </span>
-                    <div>
-                      <div className="text-xs font-bold text-[#0F6252] dark:text-emerald-300">Cuaderno de errores prioritario</div>
-                      <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                        Preguntas falladas en tus intentos. Solo desaparecen al acertarlas 3 veces consecutivas.
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => iniciarTest("todos")}
-                    className="px-3 py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition shrink-0"
-                  >
-                    Repasar fallos →
-                  </button>
-                </div>
-
-              </div>
-            </main>
-
-          </div>
-        </div>
-      );
-    }
-
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-  </script>
-</body>
-</html>
