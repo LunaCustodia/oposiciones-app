@@ -65,7 +65,7 @@
       { id: 6, codigo: "COM-06", bloque: "Común", numero: 6, titulo: "El Texto Refundido de la Ley del Estatuto Básico del Empleado Público. Consideraciones generales. El personal al servicio de la Administración Local: clases, derechos y deberes. Régimen disciplinario del personal funcionario e incompatibilidades." },
       { id: 7, codigo: "COM-07", bloque: "Común", numero: 7, titulo: "El acto administrativo. Concepto. Elementos. Clases. Requisitos: la motivación y forma. Eficacia de los actos administrativos. La invalidez del acto administrativo. Nulidad y anulabilidad." },
       { id: 8, codigo: "COM-08", bloque: "Común", numero: 8, titulo: "El procedimiento administrativo común de las Administraciones Públicas: ámbito de aplicación. Las personas interesadas en el procedimiento. Términos y plazos: cómputo, ampliación y tramitación de urgencia." },
-      { id: 9, codigo: "COM-09", bloque: "Común", numero: 9, titulo: "La regulación de la Administración en la Ley 40/2015, de 1 de octubre, de Régimen Jurídico del Sector Público: disposiciones y principios generales y principios de intervención. Especial mención al funcionamiento electrónico del sector público." },
+      { id: 9, codigo: "COM-09", bloque: "Común", numero: 9, titulo: "La regulación de la Administración en la Ley 40/2015, de 1 de octubre, de Régimen Jurédico del Sector Público: disposiciones y principios generales y principios de intervención. Especial mención al funcionamiento electrónico del sector público." },
       { id: 10, codigo: "COM-10", bloque: "Común", numero: 10, titulo: "La Hacienda Pública en la Constitución española de 1978. La Administración Tributaria. La Ley General presupuestaria: estructura y principios generales." },
       { id: 11, codigo: "COM-11", bloque: "Común", numero: 11, titulo: "Ley 19/2013, de 9 de diciembre, de Transparencia, Acceso a la Información Pública y Buen Gobierno y Ley 1/2014, de 24 de junio, de Transparencia Pública de Andalucía. Especial referencia al ámbito local." },
       { id: 12, codigo: "COM-12", bloque: "Común", numero: 12, titulo: "Nociones generales de la normativa estatal y autonómica en materia de Igualdad y violencia de Género. Medidas en el ámbito administrativo y laboral para promover la igualdad real y efectiva de las personas TRANS y LGTBI establecidas en la Ley 4/2023, de 28 de febrero." },
@@ -164,7 +164,6 @@
       const [moduloActivo, setModuloActivo] = useState("materiales");
       const [modoOscuro, setModoOscuro] = useState(false);
 
-      // Almacén detectado
       const [bucketActivo, setBucketActivo] = useState("Temario");
       const [archivosComunes, setArchivosComunes] = useState([]);
       const [archivosEspecificos, setArchivosEspecificos] = useState([]);
@@ -189,7 +188,7 @@
         else document.documentElement.classList.remove("dark");
       }, [modoOscuro]);
 
-      // Sincronización robusta con Supabase Storage (Prueba 'Temario' y 'temario')
+      // Sincronización robusta con Supabase Storage
       const sincronizarArchivos = useCallback(async () => {
         if (!supabaseClient) return;
         setCargandoArchivos(true);
@@ -228,7 +227,7 @@
         }
       }, [autenticado, sincronizarArchivos]);
 
-      // Localizador de archivo por tema
+      // Localizador flexible del archivo por tema
       const obtenerArchivoTema = useCallback((tema) => {
         const lista = tema.bloque === 'Común' ? archivosComunes : archivosEspecificos;
         const numPadded = String(tema.numero).padStart(2, '0');
@@ -247,17 +246,84 @@
         return coincidencia ? coincidencia.name : null;
       }, [archivosComunes, archivosEspecificos]);
 
-      const handleAbrirTema = (tema) => {
+      // =========================================================================
+      // ABRIR TEMA: INYECCIÓN BLOB EN PESTAÑA LIMPIA (SIN FORZAR DESCARGA)
+      // =========================================================================
+      const handleAbrirTema = async (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
-        if (nombre) {
-          const url = `${SUPABASE_URL}/storage/v1/object/public/${bucketActivo}/${carpeta}/${encodeURIComponent(nombre)}`;
-          window.open(url, '_blank');
-        } else {
-          alert(`El PDF de ${tema.codigo} no se detecta en la carpeta ${carpeta}. Comprueba el nombre del archivo.`);
+        if (!nombre) {
+          alert(`El PDF de ${tema.codigo} no se detecta en la carpeta ${carpeta}.`);
+          return;
+        }
+
+        const url = `${SUPABASE_URL}/storage/v1/object/public/${bucketActivo}/${carpeta}/${encodeURIComponent(nombre)}`;
+
+        // 1. Abrir la pestaña de inmediato para evitar que el navegador la bloquee
+        const nuevaPestana = window.open('about:blank', '_blank');
+        if (nuevaPestana) {
+          nuevaPestana.document.title = `Cargando ${tema.codigo}...`;
+          nuevaPestana.document.body.style.margin = '0';
+          nuevaPestana.document.body.style.backgroundColor = '#0f172a';
+          nuevaPestana.document.body.style.color = '#f8fafc';
+          nuevaPestana.document.body.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+          nuevaPestana.document.body.style.display = 'flex';
+          nuevaPestana.document.body.style.alignItems = 'center';
+          nuevaPestana.document.body.style.justifyContent = 'center';
+          nuevaPestana.document.body.style.height = '100vh';
+          nuevaPestana.document.body.innerHTML = `
+            <div style="text-align: center; max-width: 550px; padding: 24px;">
+              <div style="font-size: 13px; font-weight: 700; color: #14b89a; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px;">${tema.codigo}</div>
+              <div style="font-size: 16px; font-weight: 600; line-height: 1.4; margin-bottom: 20px;">${tema.titulo}</div>
+              <div style="display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: #94a3b8; background: #1e293b; padding: 10px 20px; border-radius: 9999px;">
+                <span style="display:inline-block; width:8px; height:8px; background:#14b89a; border-radius:50%;"></span>
+                Abriendo en el visor oficial de lectura...
+              </div>
+            </div>
+          `;
+        }
+
+        try {
+          // 2. Descargar bytes en memoria
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error("No se pudo obtener el archivo desde el almacén.");
+          const buffer = await resp.arrayBuffer();
+
+          // 3. Crear Blob con MIME application/pdf forzado
+          const pdfBlob = new Blob([buffer], { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(pdfBlob);
+
+          // 4. Renderizar el visor oficial dentro de la pestaña nueva
+          if (nuevaPestana && !nuevaPestana.closed) {
+            nuevaPestana.document.title = `${tema.codigo} — ${tema.titulo}`;
+            nuevaPestana.document.body.style.margin = '0';
+            nuevaPestana.document.body.style.padding = '0';
+            nuevaPestana.document.body.style.overflow = 'hidden';
+            nuevaPestana.document.body.innerHTML = `
+              <iframe 
+                src="${blobUrl}" 
+                style="width: 100vw; height: 100vh; border: none; margin: 0; padding: 0; display: block;"
+                title="${tema.codigo} — ${tema.titulo}"
+              ></iframe>
+            `;
+          }
+        } catch (err) {
+          console.error("Error abriendo PDF:", err);
+          if (nuevaPestana && !nuevaPestana.closed) {
+            nuevaPestana.document.body.innerHTML = `
+              <div style="text-align: center; color: #f87171; font-family: sans-serif; padding: 40px;">
+                <p style="font-weight: bold; font-size: 16px;">No se pudo mostrar el PDF en el visor.</p>
+                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 16px;">${err.message}</p>
+                <a href="${url}" download="${nombre}" style="display: inline-block; padding: 10px 20px; background: #0F6252; color: white; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: bold;">
+                  Descargar directamente
+                </a>
+              </div>
+            `;
+          }
         }
       };
 
+      // DESCARGAR TEMA A DISCO
       const handleDescargarTema = (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
@@ -340,7 +406,7 @@
         );
       }
 
-      // EXAMEN
+      // SALA DE EXAMEN
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
         const resp = respuestas[p?.id];
@@ -637,7 +703,7 @@
                   </>
                 )}
 
-                {/* 2. MATERIALES (SINCRONIZADO EN TIEMPO REAL CON SUPABASE) */}
+                {/* 2. MATERIALES & TEMARIO CANÓNICO */}
                 {(moduloActivo === "materiales" || moduloActivo === "temario") && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
