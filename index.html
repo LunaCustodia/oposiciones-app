@@ -1,10 +1,9 @@
 <!DOCTYPE html>
-<html lang="es" class="dark">
+<html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Oposiciones — Simulador & Test</title>
-  <!-- Tailwind CSS & Tipografía Inter -->
+  <title>Archivo & Biblioteca — Tu espacio de estudio</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -12,15 +11,21 @@
       theme: {
         extend: {
           colors: {
-            brand: { 50: '#eff6ff', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a', 950: '#0a0f1d' }
+            brand: {
+              50: '#eef8f5',
+              100: '#d7efe7',
+              200: '#b2dfd2',
+              500: '#17836d',
+              700: '#0f6252',
+              800: '#0c4d40',
+              900: '#08382f'
+            }
           }
         }
       }
     }
   </script>
-  <!-- Supabase JS CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- React & Babel Standalone -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -29,19 +34,20 @@
     .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 antialiased select-none">
+<body class="bg-slate-50 text-slate-900 antialiased select-none dark:bg-slate-950 dark:text-slate-100">
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useMemo } = React;
+    const { useState, useEffect, useMemo, useCallback } = React;
 
-    // Preguntas iniciales de demostración hasta conectar Supabase
-    const MOCK_PREGUNTAS = [
+    // BANCO DEMO INICIAL CON FUENTES
+    const BANCO_DEMO = [
       {
         id: "p1",
+        origen: "oficial",
         numero_orden: 1,
         enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto administrativo fuera expreso según la Ley 39/2015?",
-        evidencia_texto: "Artículo 124.1 Ley 39/2015: El plazo para la interposición del recurso de reposición será de un mes, si el acto fuera expreso. Transcurrido dicho plazo, únicamente podrá interponerse recurso contencioso-administrativo.",
+        evidencia_texto: "Art. 124.1 Ley 39/2015: El plazo para la interposición del recurso de reposición será de un mes, si el acto fuera expreso. Transcurrido dicho plazo, únicamente podrá interponerse recurso contencioso-administrativo.",
         opciones: [
           { id: "o1", letra: "A", texto: "Un mes a contar desde el día siguiente a la notificación o publicación.", es_correcta: true },
           { id: "o2", letra: "B", texto: "Dos meses a contar desde el día siguiente a la notificación.", es_correcta: false },
@@ -51,424 +57,502 @@
       },
       {
         id: "p2",
+        origen: "temario",
+        tema: "Tema 14",
         numero_orden: 2,
-        enunciado: "Según el artículo 140 de la Constitución Española, los concejales de los Ayuntamientos serán elegidos por:",
-        evidencia_texto: "Artículo 140 CE: Los Concejales serán elegidos por los vecinos del municipio mediante sufragio universal, libre, igual, directo y secreto, en la forma establecida por la ley.",
+        enunciado: "Según el principio archivístico de procedencia o respeto al origen de los fondos:",
+        evidencia_texto: "Tema 14 Archivos: Los documentos producidos por una institución u organismo no deben mezclarse con los producidos por otra.",
         opciones: [
-          { id: "o5", letra: "A", texto: "El Alcalde en la sesión plenaria de constitución de la corporación.", es_correcta: false },
-          { id: "o6", letra: "B", texto: "Los vecinos del municipio mediante sufragio universal, libre, igual, directo y secreto.", es_correcta: true },
-          { id: "o7", letra: "C", texto: "El Presidente de la Diputación Provincial correspondiente.", es_correcta: false },
-          { id: "o8", letra: "D", texto: "Los representantes de los partidos políticos con mayor implantación local.", es_correcta: false }
-        ]
-      },
-      {
-        id: "p3",
-        numero_orden: 3,
-        enunciado: "En relación con los documentos de archivo, el principio de procedencia establece que:",
-        evidencia_texto: "Manual de Archivística: El principio de procedencia o respeto al origen exige que los documentos producidos por una institución no se mezclen con los de otra.",
-        opciones: [
-          { id: "o9", letra: "A", texto: "Los documentos deben ordenarse cronológicamente sin importar la oficina que los generó.", es_correcta: false },
-          { id: "o10", letra: "B", texto: "Los documentos de cada fondo deben mantenerse agrupados sin mezclarse con fondos de otras entidades.", es_correcta: true },
-          { id: "o11", letra: "C", texto: "Los expedientes deben destruirse transcurridos 5 años de su archivo general.", es_correcta: false },
-          { id: "o12", letra: "D", texto: "El acceso a los documentos históricos requiere autorización previa del Consejo de Gobierno.", es_correcta: false }
+          { id: "o5", letra: "A", texto: "Los expedientes deben clasificarse por orden cronológico estricto independientemente del productor.", es_correcta: false },
+          { id: "o6", letra: "B", texto: "Los documentos de cada fondo deben mantenerse agrupados sin mezclarse con otros.", es_correcta: true },
+          { id: "o7", letra: "C", texto: "Los documentos históricos pasan directamente a expurgo a los 10 años.", es_correcta: false },
+          { id: "o8", letra: "D", texto: "Solo se aplica a la documentación generada en soporte papel.", es_correcta: false }
         ]
       }
     ];
 
     function App() {
-      // Estado de Supabase
-      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("sp_url") || "");
-      const [supabaseAnonKey, setSupabaseAnonKey] = useState(() => localStorage.getItem("sp_key") || "");
-      const [mostrarConfig, setMostrarConfig] = useState(false);
+      // Estado de Autenticación
+      const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
+      const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
+      const [passwordInput, setPasswordInput] = useState("");
+      const [errorLogin, setErrorLogin] = useState("");
 
-      // Estado del Examen
-      const [preguntas, setPreguntas] = useState(MOCK_PREGUNTAS);
-      const [indice, setIndice] = useState(0);
+      // Módulo activo
+      const [moduloActivo, setModuloActivo] = useState("inicio"); // inicio, oficiales, temario, leyes, otros, errores, resultados, materiales
+      const [modoOscuro, setModoOscuro] = useState(false);
+
+      // Sala de examen activa
+      const [examenActivo, setExamenActivo] = useState(false);
+      const [preguntasTest, setPreguntasTest] = useState(BANCO_DEMO);
+      const [indicePregunta, setIndicePregunta] = useState(0);
       const [respuestas, setRespuestas] = useState({});
-      const [segundos, setSegundos] = useState(3600); // 60 min
+      const [segundos, setSegundos] = useState(3600);
       const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
-      const [mostrarHojaMovil, setMostrarHojaMovil] = useState(false);
-      const [examenEntregado, setExamenEntregado] = useState(false);
+      const [examenCorregido, setExamenCorregido] = useState(false);
 
-      // Guardar credenciales de Supabase
-      const guardarCredenciales = (url, key) => {
-        setSupabaseUrl(url);
-        setSupabaseAnonKey(key);
-        localStorage.setItem("sp_url", url);
-        localStorage.setItem("sp_key", key);
-        setMostrarConfig(false);
-      };
-
-      // Cargar preguntas de Supabase si existen credenciales
+      // Gestión de tema oscuro
       useEffect(() => {
-        if (!supabaseUrl || !supabaseAnonKey) return;
-        try {
-          const client = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
-          client.from('preguntas')
-            .select('id, numero_orden, enunciado, evidencia_tipo, evidencia_url, evidencia_texto, opciones_respuesta(id, letra, texto, es_correcta)')
-            .order('numero_orden', { ascending: true })
-            .limit(100)
-            .then(({ data, error }) => {
-              if (data && data.length > 0) {
-                const formateadas = data.map(p => ({
-                  id: p.id,
-                  numero_orden: p.numero_orden,
-                  enunciado: p.enunciado,
-                  evidencia_url: p.evidencia_url,
-                  evidencia_texto: p.evidencia_texto,
-                  opciones: (p.opciones_respuesta || []).sort((a,b) => a.letra.localeCompare(b.letra))
-                }));
-                setPreguntas(formateadas);
-              }
-            });
-        } catch (e) {
-          console.error("Error al conectar con Supabase:", e);
+        if (modoOscuro) document.documentElement.classList.add("dark");
+        else document.documentElement.classList.remove("dark");
+      }, [modoOscuro]);
+
+      // Control de acceso
+      const handleLogin = (e) => {
+        e.preventDefault();
+        if (!passwordInput.trim()) {
+          setErrorLogin("Introduce tu contraseña de acceso.");
+          return;
         }
-      }, [supabaseUrl, supabaseAnonKey]);
-
-      // Temporizador
-      useEffect(() => {
-        if (examenEntregado) return;
-        const timer = setInterval(() => setSegundos(s => s > 0 ? s - 1 : 0), 1000);
-        return () => clearInterval(timer);
-      }, [examenEntregado]);
-
-      const preguntaActual = preguntas[indice] || preguntas[0];
-      const estadoResp = respuestas[preguntaActual?.id];
-
-      // Responder opción
-      const responder = useCallback((opcionId, letra) => {
-        if (examenEntregado) return;
-        setRespuestas(prev => {
-          const actual = prev[preguntaActual.id];
-          const esMisma = actual?.opcion_id === opcionId;
-          return {
-            ...prev,
-            [preguntaActual.id]: {
-              opcion_id: esMisma ? null : opcionId,
-              letra: esMisma ? null : letra,
-              dudosa: actual?.dudosa || false
-            }
-          };
-        });
-      }, [preguntaActual?.id, examenEntregado]);
-
-      // Alternar duda
-      const alternarDuda = useCallback(() => {
-        setRespuestas(prev => {
-          const actual = prev[preguntaActual.id] || { opcion_id: null, letra: null, dudosa: false };
-          return {
-            ...prev,
-            [preguntaActual.id]: { ...actual, dudosa: !actual.dudosa }
-          };
-        });
-      }, [preguntaActual?.id]);
-
-      // Atajos de teclado en PC
-      useEffect(() => {
-        const handleKeyDown = (e) => {
-          if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-          const k = e.key.toUpperCase();
-          if (['A', '1'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'A'); if (op) responder(op.id, 'A'); }
-          else if (['B', '2'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'B'); if (op) responder(op.id, 'B'); }
-          else if (['C', '3'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'C'); if (op) responder(op.id, 'C'); }
-          else if (['D', '4'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'D'); if (op) responder(op.id, 'D'); }
-          else if (k === 'D') alternarDuda();
-          else if (k === 'E') setMostrarEvidencia(v => !v);
-          else if (k === 'ARROWRIGHT' || k === ' ') { e.preventDefault(); if (indice < preguntas.length - 1) setIndice(i => i + 1); }
-          else if (k === 'ARROWLEFT') { e.preventDefault(); if (indice > 0) setIndice(i => i - 1); }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-      }, [preguntaActual, indice, preguntas.length, responder, alternarDuda]);
-
-      // Métricas
-      const respondidas = Object.values(respuestas).filter(r => r.opcion_id).length;
-      const dudosas = Object.values(respuestas).filter(r => r.dudosa).length;
-
-      const formatTiempo = (s) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
-        return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+        setAutenticado(true);
+        localStorage.setItem("auth_session", "true");
+        localStorage.setItem("auth_email", emailInput);
+        setErrorLogin("");
       };
 
-      // Cálculo de resultado si se entrega
-      const resultados = useMemo(() => {
-        if (!examenEntregado) return null;
-        let aciertos = 0, fallos = 0, blancos = 0;
-        preguntas.forEach(p => {
-          const resp = respuestas[p.id];
-          if (!resp || !resp.opcion_id) { blancos++; }
-          else {
-            const correcta = p.opciones.find(o => o.es_correcta);
-            if (correcta && correcta.id === resp.opcion_id) aciertos++;
-            else fallos++;
-          }
-        });
-        const neta = Math.max(0, aciertos - (fallos * 0.333)).toFixed(2);
-        return { aciertos, fallos, blancos, neta };
-      }, [examenEntregado, preguntas, respuestas]);
+      const handleLogout = () => {
+        setAutenticado(false);
+        localStorage.removeItem("auth_session");
+        setExamenActivo(false);
+      };
 
-      return (
-        <div className="min-h-screen flex flex-col justify-between bg-slate-950 text-slate-100">
-          
-          {/* BARRA SUPERIOR COMPACTA (44px) */}
-          <header className="sticky top-0 z-30 h-11 border-b border-slate-800 bg-slate-950/95 backdrop-blur px-3 flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-3">
-              <span className="font-bold text-slate-200">{respondidas}/{preguntas.length}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-amber-400 font-semibold">⚑ {dudosas}</span>
+      // Iniciar test con filtro
+      const iniciarTest = (filtroTipo) => {
+        let filtradas = BANCO_DEMO;
+        if (filtroTipo !== "todos") {
+          filtradas = BANCO_DEMO.filter(p => p.origen === filtroTipo);
+        }
+        setPreguntasTest(filtradas.length > 0 ? filtradas : BANCO_DEMO);
+        setIndicePregunta(0);
+        setRespuestas({});
+        setSegundos(3600);
+        setExamenCorregido(false);
+        setExamenActivo(true);
+      };
+
+      // ----------------------------------------------------------------------
+      // VISTA 1: ACCESO PRIVADO (Login de la Captura 1)
+      // ----------------------------------------------------------------------
+      if (!autenticado) {
+        return (
+          <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+            <div className="w-full max-w-[390px] bg-white rounded-3xl p-7 shadow-sm border border-slate-200/80">
+              
+              <div className="inline-block px-3 py-1 rounded-full bg-[#E5F5F0] text-[#0F6252] font-mono text-[11px] font-bold tracking-wider mb-5">
+                ACCESO PRIVADO
+              </div>
+
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">OposiTest</h1>
+              <p className="text-xs text-slate-500 font-medium mt-1 mb-6">
+                Ayudante de Archivo y Biblioteca · OEP 2023
+              </p>
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-800 mb-1.5">Correo electrónico</label>
+                  <input
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    required
+                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#E59833] focus:ring-2 focus:ring-[#E59833]/30 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-800 mb-1.5">Contraseña</label>
+                  <input
+                    type="password"
+                    placeholder="••••••••••••"
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    required
+                    className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#0F6252] focus:ring-2 focus:ring-[#0F6252]/20 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none transition"
+                  />
+                </div>
+
+                {errorLogin && (
+                  <p className="text-[11px] text-rose-600 font-medium">{errorLogin}</p>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-xs py-3 rounded-xl transition shadow-xs mt-2"
+                >
+                  Entrar
+                </button>
+              </form>
+
+              <div className="text-center mt-6">
+                <button
+                  onClick={() => alert("Restablecimiento no configurado. Acceso exclusivo local.")}
+                  className="text-xs font-semibold text-[#0F6252] hover:underline"
+                >
+                  He olvidado mi contraseña
+                </button>
+              </div>
             </div>
+          </div>
+        );
+      }
 
-            <div className="font-bold tracking-wider text-sm text-slate-100">
-              {formatTiempo(segundos)}
-            </div>
+      // ----------------------------------------------------------------------
+      // VISTA 2: SALA DE EXAMEN COMPACTA
+      // ----------------------------------------------------------------------
+      if (examenActivo) {
+        const p = preguntasTest[indicePregunta] || preguntasTest[0];
+        const resp = respuestas[p?.id];
 
-            <div className="flex items-center gap-2">
+        const responder = (opId, letra) => {
+          if (examenCorregido) return;
+          const esMisma = resp?.opcion_id === opId;
+          setRespuestas(prev => ({
+            ...prev,
+            [p.id]: { opcion_id: esMisma ? null : opId, letra: esMisma ? null : letra, dudosa: resp?.dudosa || false }
+          }));
+        };
+
+        const toggleDuda = () => {
+          setRespuestas(prev => ({
+            ...prev,
+            [p.id]: { ...resp, dudosa: !resp?.dudosa }
+          }));
+        };
+
+        return (
+          <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
+            <header className="h-11 bg-slate-950 border-b border-slate-800 px-4 flex items-center justify-between font-mono text-xs">
               <button 
-                onClick={() => setMostrarConfig(true)}
-                className="p-1 text-slate-400 hover:text-white"
-                title="Conexión Supabase"
+                onClick={() => setExamenActivo(false)} 
+                className="text-slate-400 hover:text-white flex items-center gap-1 font-semibold"
               >
-                ⚙️
+                ← Salir al panel
               </button>
-              <button 
-                onClick={() => setMostrarEvidencia(v => !v)}
-                className="hidden sm:inline-block px-2 py-0.5 rounded border border-slate-800 bg-slate-900 text-[11px] text-slate-300 hover:bg-slate-800"
-              >
-                Evidencia [E]
-              </button>
-              {!examenEntregado ? (
-                <button 
-                  onClick={() => confirm("¿Deseas finalizar y corregir el simulacro?") && setExamenEntregado(true)}
-                  className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 font-bold text-white text-[11px]"
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-slate-200">{Object.values(respuestas).filter(r => r.opcion_id).length}/{preguntasTest.length}</span>
+                <span className="text-slate-600">|</span>
+                <span className="text-amber-400">⚑ {Object.values(respuestas).filter(r => r.dudosa).length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMostrarEvidencia(v => !v)}
+                  className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900 text-[11px] text-slate-300"
+                >
+                  Evidencia [E]
+                </button>
+                <button
+                  onClick={() => setExamenCorregido(true)}
+                  className="px-2.5 py-1 rounded bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-[11px]"
                 >
                   Finalizar
                 </button>
-              ) : (
-                <span className="px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded font-bold text-[10px]">
-                  CORREGIDO
-                </span>
-              )}
-            </div>
-          </header>
+              </div>
+            </header>
 
-          {/* CUERPO CENTRAL */}
-          <div className="flex-1 flex overflow-hidden">
-            
-            {/* Pregunta Activa */}
-            <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col justify-between max-w-3xl mx-auto w-full">
-              <div className="space-y-4">
-                
-                {/* Meta de pregunta */}
-                <div className="flex items-center justify-between text-xs font-mono text-slate-400">
-                  <span>PREGUNTA {preguntaActual.numero_orden} DE {preguntas.length}</span>
-                  <button
-                    onClick={alternarDuda}
-                    className={`px-2 py-0.5 rounded border transition ${
-                      estadoResp?.dudosa 
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500 font-bold'
-                        : 'border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {estadoResp?.dudosa ? '⚑ Marcada dudosa [D]' : 'Marcar dudosa [D]'}
+            <main className="flex-1 max-w-3xl mx-auto w-full p-4 md:p-6 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-xs font-mono text-slate-400">
+                  <span>PREGUNTA {p.numero_orden} DE {preguntasTest.length}</span>
+                  <button onClick={toggleDuda} className="text-amber-400 hover:underline">
+                    {resp?.dudosa ? '★ Dudosa marcada' : '☆ Marcar dudosa'}
                   </button>
                 </div>
-
-                {/* Enunciado */}
-                <h2 className="text-sm md:text-base font-medium text-slate-100 leading-relaxed">
-                  {preguntaActual.enunciado}
-                </h2>
-
-                {/* Opciones */}
+                <h2 className="text-sm md:text-base font-medium text-white leading-relaxed">{p.enunciado}</h2>
                 <div className="space-y-2 pt-2">
-                  {preguntaActual.opciones.map(op => {
-                    const seleccionada = estadoResp?.opcion_id === op.id;
-                    let estilo = 'border-slate-800/80 bg-slate-900/30 text-slate-300 hover:bg-slate-800/60';
-                    
-                    if (examenEntregado) {
-                      if (op.es_correcta) estilo = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
-                      else if (seleccionada && !op.es_correcta) estilo = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
-                    } else if (seleccionada) {
-                      estilo = 'border-blue-500 bg-blue-950/50 text-blue-100 font-medium';
+                  {p.opciones.map(op => {
+                    const sel = resp?.opcion_id === op.id;
+                    let cls = 'border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-800/60';
+                    if (examenCorregido) {
+                      if (op.es_correcta) cls = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
+                      else if (sel) cls = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
+                    } else if (sel) {
+                      cls = 'border-[#0F6252] bg-[#0F6252]/20 text-white font-semibold';
                     }
 
                     return (
                       <button
                         key={op.id}
                         onClick={() => responder(op.id, op.letra)}
-                        className={`w-full text-left p-3 rounded border text-xs md:text-sm flex items-start gap-3 transition active:scale-[0.99] ${estilo}`}
+                        className={`w-full text-left p-2.5 rounded-lg border text-xs flex items-start gap-2.5 transition ${cls}`}
                       >
-                        <span className={`font-mono font-bold px-1.5 py-0.5 rounded text-xs shrink-0 ${
-                          seleccionada ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'
-                        }`}>
-                          {op.letra}
-                        </span>
-                        <span className="leading-snug">{op.texto}</span>
+                        <span className="font-mono font-bold px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 text-[11px]">{op.letra}</span>
+                        <span>{op.texto}</span>
                       </button>
                     );
                   })}
                 </div>
-
-                {/* Resumen al entregar */}
-                {resultados && (
-                  <div className="mt-4 p-3 bg-slate-900 border border-slate-800 rounded font-mono text-xs flex justify-around text-center">
-                    <div><span className="text-emerald-400 block font-bold text-sm">{resultados.aciertos}</span>Aciertos</div>
-                    <div><span className="text-rose-400 block font-bold text-sm">{resultados.fallos}</span>Fallos</div>
-                    <div><span className="text-slate-400 block font-bold text-sm">{resultados.blancos}</span>En blanco</div>
-                    <div><span className="text-blue-400 block font-bold text-sm">{resultados.neta}</span>Nota Neta (-0.33)</div>
-                  </div>
-                )}
               </div>
 
-              {/* Controles de Navegación */}
-              <div className="pt-6 border-t border-slate-800/60 flex items-center justify-between">
+              <div className="pt-4 border-t border-slate-800 flex justify-between">
                 <button
-                  disabled={indice === 0}
-                  onClick={() => setIndice(i => i - 1)}
-                  className="px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-30"
+                  disabled={indicePregunta === 0}
+                  onClick={() => setIndicePregunta(i => i - 1)}
+                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
                 >
                   ← Anterior
                 </button>
-
                 <button
-                  onClick={() => setMostrarHojaMovil(true)}
-                  className="md:hidden px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 text-slate-200"
-                >
-                  Hoja ({indice + 1})
-                </button>
-
-                <button
-                  disabled={indice === preguntas.length - 1}
-                  onClick={() => setIndice(i => i + 1)}
-                  className="px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-30"
+                  disabled={indicePregunta === preguntasTest.length - 1}
+                  onClick={() => setIndicePregunta(i => i + 1)}
+                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
                 >
                   Siguiente →
                 </button>
               </div>
             </main>
 
-            {/* Matriz 100 Celdas lateral (Desktop / iPad horizontal) */}
-            <aside className="hidden md:block w-60 border-l border-slate-800 bg-slate-950 p-3 overflow-y-auto">
-              <div className="text-[11px] font-mono font-bold text-slate-400 mb-2">HOJA DE RESPUESTAS</div>
-              <div className="grid grid-cols-5 gap-1">
-                {preguntas.map((p, idx) => {
-                  const r = respuestas[p.id];
-                  const respondida = Boolean(r?.opcion_id);
-                  const dudosa = Boolean(r?.dudosa);
-                  const esActual = idx === indice;
-
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => setIndice(idx)}
-                      className={`h-7 rounded border font-mono text-[11px] flex items-center justify-center relative transition ${
-                        respondida 
-                          ? 'bg-blue-600 border-blue-500 text-white font-bold' 
-                          : dudosa 
-                          ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold' 
-                          : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700'
-                      } ${esActual ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-950' : ''}`}
-                    >
-                      {p.numero_orden}
-                      {dudosa && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>
-          </div>
-
-          {/* MODAL EVIDENCIA */}
-          {mostrarEvidencia && (
-            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3">
-              <div className="bg-slate-950 border border-slate-800 w-full max-w-lg rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="font-mono text-xs font-bold text-slate-300">
-                    EVIDENCIA / FUENTE — P.{preguntaActual.numero_orden}
-                  </span>
-                  <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 hover:text-white font-mono">✕</button>
-                </div>
-                {preguntaActual.evidencia_texto && (
-                  <div className="p-3 bg-slate-900 border border-slate-800 rounded font-serif text-xs leading-relaxed text-slate-200">
-                    {preguntaActual.evidencia_texto}
+            {mostrarEvidencia && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+                <div className="bg-slate-950 border border-slate-800 max-w-lg w-full p-4 rounded-xl space-y-3">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="text-xs font-mono font-bold text-slate-300">EVIDENCIA OFICIAL P.{p.numero_orden}</span>
+                    <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 font-mono">✕</button>
                   </div>
-                )}
-                {preguntaActual.evidencia_url && (
-                  <img src={preguntaActual.evidencia_url} alt="Recorte Oficial" className="w-full rounded border border-slate-800" />
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* BOTTOM SHEET HOJA DE RESPUESTAS (MÓVIL) */}
-          {mostrarHojaMovil && (
-            <div className="fixed inset-0 z-50 bg-black/70 flex flex-col justify-end md:hidden">
-              <div className="bg-slate-950 border-t border-slate-800 p-4 rounded-t-xl max-h-[70vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-3 font-mono text-xs">
-                  <span className="font-bold text-slate-300">HOJA DE RESPUESTAS</span>
-                  <button onClick={() => setMostrarHojaMovil(false)} className="text-slate-400">Cerrar</button>
-                </div>
-                <div className="grid grid-cols-6 gap-1.5">
-                  {preguntas.map((p, idx) => {
-                    const r = respuestas[p.id];
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => { setIndice(idx); setMostrarHojaMovil(false); }}
-                        className={`h-8 rounded border font-mono text-xs flex items-center justify-center ${
-                          r?.opcion_id ? 'bg-blue-600 text-white font-bold' : r?.dudosa ? 'bg-amber-500/20 text-amber-300 border-amber-500' : 'border-slate-800 bg-slate-900 text-slate-400'
-                        }`}
-                      >
-                        {p.numero_orden}
-                      </button>
-                    );
-                  })}
+                  <p className="text-xs font-serif text-slate-200 leading-relaxed bg-slate-900 p-3 rounded border border-slate-800">
+                    {p.evidencia_texto}
+                  </p>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        );
+      }
 
-          {/* MODAL CONFIGURACIÓN SUPABASE */}
-          {mostrarConfig && (
-            <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3">
-              <div className="bg-slate-950 border border-slate-800 w-full max-w-md rounded-lg p-4 space-y-3 font-sans text-xs">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="font-mono font-bold text-slate-200">CONECTAR SUPABASE</span>
-                  <button onClick={() => setMostrarConfig(false)} className="text-slate-400 hover:text-white">✕</button>
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1 font-mono">Project URL</label>
-                  <input 
-                    id="inp-url" 
-                    defaultValue={supabaseUrl} 
-                    placeholder="https://xxxx.supabase.co" 
-                    className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-100 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1 font-mono">Anon Public Key</label>
-                  <input 
-                    id="inp-key" 
-                    defaultValue={supabaseAnonKey} 
-                    placeholder="eyJhbGciOi..." 
-                    className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-100 font-mono"
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    const u = document.getElementById("inp-url").value.trim();
-                    const k = document.getElementById("inp-key").value.trim();
-                    guardarCredenciales(u, k);
-                  }}
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold font-mono rounded mt-2"
+      // ----------------------------------------------------------------------
+      // VISTA 3: DASHBOARD PRINCIPAL (Estructura de la Captura 2 con pestañas compactas)
+      // ----------------------------------------------------------------------
+      const navItems = [
+        { id: "inicio", sigla: "IN", label: "Inicio", color: "bg-[#0F6252] text-white" },
+        { id: "oficiales", sigla: "OF", label: "Exámenes oficiales", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "temario", sigla: "MT", label: "Mi temario", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "leyes", sigla: "LE", label: "Leyes y normas", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "otros", sigla: "OT", label: "Otros exámenes", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "errores", sigla: "RE", label: "Repasar errores", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "resultados", sigla: "MR", label: "Mis resultados", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "materiales", sigla: "MA", label: "Subir PDFs / Ingesta", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "gestion", sigla: "GA", label: "Gestión avanzada", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+        { id: "ayuda", sigla: "AY", label: "Ayuda y manual", color: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300" },
+      ];
+
+      return (
+        <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950 font-sans">
+          
+          {/* BARRA LATERAL IZQUIERDA (Estilo idéntico a Captura 2) */}
+          <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
+            {/* Cabecera Sidebar */}
+            <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800/80">
+              <div className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
+                AB
+              </div>
+              <div className="leading-tight truncate">
+                <div className="font-bold text-xs text-slate-900 dark:text-white truncate">Archivo & Biblioteca</div>
+                <div className="text-[10px] text-slate-400 truncate">Tu espacio de estudio</div>
+              </div>
+            </div>
+
+            {/* Lista de Módulos */}
+            <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+              {navItems.map(item => {
+                const activo = moduloActivo === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setModuloActivo(item.id)}
+                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs font-medium transition text-left ${
+                      activo
+                        ? 'bg-[#EBF7F4] text-[#0F6252] font-semibold dark:bg-[#0F6252]/20 dark:text-emerald-300'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded flex items-center justify-center font-mono text-[10px] font-bold shrink-0 ${
+                      activo ? 'bg-[#0F6252] text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                    }`}>
+                      {item.sigla}
+                    </span>
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </aside>
+
+          {/* CONTENIDO PRINCIPAL */}
+          <div className="flex-1 flex flex-col min-w-0">
+            
+            {/* Barra Superior Header */}
+            <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-5 flex items-center justify-between shrink-0">
+              <div className="text-xs text-slate-500 font-medium capitalize">
+                {moduloActivo}
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <button 
+                  onClick={() => setModuloActivo("resultados")}
+                  className="px-2.5 py-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 font-medium"
                 >
-                  Guardar Conexión
+                  Mis resultados
+                </button>
+                <button 
+                  onClick={() => alert("Manual de ayuda: selecciona un tipo de test o sube exámenes en PDF.")}
+                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
+                >
+                  <span>?</span> Ayuda
+                </button>
+                <button
+                  onClick={() => setModoOscuro(!modoOscuro)}
+                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
+                >
+                  ◑ {modoOscuro ? 'Claro' : 'Oscuro'}
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="px-3 py-1 bg-[#102A43] hover:bg-slate-900 text-white rounded-lg font-medium flex items-center gap-1 ml-1"
+                >
+                  <span>↩</span> Salir
                 </button>
               </div>
-            </div>
-          )}
+            </header>
 
+            {/* Área Central: Dashboard */}
+            <main className="flex-1 p-5 md:p-6 overflow-y-auto">
+              <div className="max-w-5xl mx-auto space-y-4">
+                
+                <div>
+                  <span className="font-mono text-[10px] font-bold text-[#0F6252] tracking-wider uppercase">INICIO</span>
+                  <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white tracking-tight mt-0.5">
+                    Tu espacio de estudio
+                  </h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Selecciona una categoría de test para entrenar o repasa tus fallos acumulados.
+                  </p>
+                </div>
+
+                {/* LOS 4 MÓDULOS DE EXAMEN (Diseño compacto sin espacios muertos) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                  
+                  {/* Tarjeta 1: Oficiales */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                    <div>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="w-7 h-7 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">
+                          OF
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-semibold">
+                          Tribunal Oficial
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Exámenes oficiales</h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
+                        Exámenes reales de convocatorias con recortes de tribunal y soluciones publicadas.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => iniciarTest("oficiales")}
+                      className="mt-3 w-full py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition"
+                    >
+                      Practicar test →
+                    </button>
+                  </div>
+
+                  {/* Tarjeta 2: Temario */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                    <div>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="w-7 h-7 rounded-lg bg-[#3F51B5] text-white flex items-center justify-center font-bold text-xs font-mono">
+                          MT
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
+                          60 Temas
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Mi temario</h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
+                        12 temas comunes y 48 específicos con cita literal del párrafo del temario.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => iniciarTest("temario")}
+                      className="mt-3 w-full py-1.5 bg-[#3F51B5] hover:bg-[#303f9f] text-white text-xs font-semibold rounded-lg transition"
+                    >
+                      Test por temas →
+                    </button>
+                  </div>
+
+                  {/* Tarjeta 3: Leyes */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                    <div>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="w-7 h-7 rounded-lg bg-[#E65100] text-white flex items-center justify-center font-bold text-xs font-mono">
+                          LE
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">
+                          Legislación
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Leyes íntegras</h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
+                        Preguntas sobre plazos, órganos y competencias con cita exacta del artículo.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => iniciarTest("todos")}
+                      className="mt-3 w-full py-1.5 bg-[#E65100] hover:bg-[#c44400] text-white text-xs font-semibold rounded-lg transition"
+                    >
+                      Test de leyes →
+                    </button>
+                  </div>
+
+                  {/* Tarjeta 4: Otros exámenes */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                    <div>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="w-7 h-7 rounded-lg bg-[#7B1FA2] text-white flex items-center justify-center font-bold text-xs font-mono">
+                          OT
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[10px] font-semibold">
+                          Academias
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Otros exámenes</h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug line-clamp-2">
+                        Test de editoriales, manuales y academias para complementar el estudio.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => iniciarTest("todos")}
+                      className="mt-3 w-full py-1.5 bg-[#7B1FA2] hover:bg-[#6a1b9a] text-white text-xs font-semibold rounded-lg transition"
+                    >
+                      Ver test →
+                    </button>
+                  </div>
+
+                </div>
+
+                {/* ACCESO RÁPIDO AL CUADERNO DE ERRORES */}
+                <div className="bg-[#EBF7F4] dark:bg-[#0F6252]/10 border border-[#b2dfd2] dark:border-[#0F6252]/40 rounded-xl p-3.5 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">
+                      RE
+                    </span>
+                    <div>
+                      <div className="text-xs font-bold text-[#0F6252] dark:text-emerald-300">Cuaderno de errores prioritario</div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                        Preguntas falladas en tus intentos. Solo desaparecen al acertarlas 3 veces consecutivas.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => iniciarTest("todos")}
+                    className="px-3 py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition shrink-0"
+                  >
+                    Repasar fallos →
+                  </button>
+                </div>
+
+              </div>
+            </main>
+
+          </div>
         </div>
       );
     }
