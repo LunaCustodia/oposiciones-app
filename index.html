@@ -38,13 +38,6 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- PDF.js para lectura directa del examen en el navegador -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script>
-    if (window.pdfjsLib) {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    }
-  </script>
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.01em; }
   </style>
@@ -60,7 +53,7 @@
     const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
     // =========================================================================
-    // SERVICIO DE ACCESO A BASE DE DATOS (SUPABASE)
+    // SERVICIO DE BASE DE DATOS (SUPABASE)
     // =========================================================================
     const ExamenService = {
       async obtenerExamenes() {
@@ -287,70 +280,6 @@
       { id: 60, codigo: "ESP-48", bloque: "Específico", numero: 48, titulo: "Sistemas integrados de gestión bibliotecaria." }
     ];
 
-    // =========================================================================
-    // PARSEADOR ROBUSTO Y FLEXIBLE PARA EXÁMENES OFICIALES
-    // =========================================================================
-    function parsearTextoExamen(textoBruto) {
-      if (!textoBruto || textoBruto.trim().length === 0) return [];
-
-      let t = textoBruto.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-      t = t.replace(/P[aá]gina\s+\d+\s+de\s+\d+/gi, ' ');
-      t = t.replace(/DIPUTACI[OÓ]N\s+PROVINCIAL[^\n]*/gi, ' ');
-      t = t.replace(/TRIBUNAL\s+CALIFICADOR[^\n]*/gi, ' ');
-
-      t = t.replace(/(?:^|\n|\s+)(?:PREGUNTA\s+)?(\d{1,3})\s*[\.\-\)]\s*(?=[A-ZÁÉÍÓÚ¿"¡])/gi, '\n###PREG###$1### ');
-
-      t = t.replace(/(?:^|\n|\s+)(?:\(?([a-dA-D])\)|\b([a-dA-D])[\.\-\:])\s+/g, (match, p1, p2) => {
-        const letra = (p1 || p2).toLowerCase();
-        return '\n###OPT###' + letra + '### ';
-      });
-
-      const bloques = t.split('\n###PREG###');
-      const resultado = [];
-
-      for (let i = 1; i < bloques.length; i++) {
-        const b = bloques[i].trim();
-        const numMatch = b.match(/^(\d{1,3})###\s*([\s\S]*)$/);
-        if (!numMatch) continue;
-
-        const num = parseInt(numMatch[1]);
-        const resto = numMatch[2];
-
-        const partesOpt = resto.split('\n###OPT###');
-        const enunciado = partesOpt[0].replace(/\s+/g, ' ').trim();
-
-        const opciones = { a: '', b: '', c: '', d: '' };
-        for (let j = 1; j < partesOpt.length; j++) {
-          const optBloque = partesOpt[j].trim();
-          const optMatch = optBloque.match(/^([a-d])###\s*([\s\S]*)$/i);
-          if (optMatch) {
-            const letra = optMatch[1].toLowerCase();
-            const textoOpt = optMatch[2].replace(/\s+/g, ' ').trim();
-            if (opciones[letra] !== undefined) {
-              opciones[letra] = textoOpt;
-            }
-          }
-        }
-
-        if (enunciado && (opciones.a || opciones.b)) {
-          resultado.push({
-            numero: num,
-            enunciado: enunciado,
-            opcion_a: opciones.a || 'Opción A',
-            opcion_b: opciones.b || 'Opción B',
-            opcion_c: opciones.c || 'Opción C',
-            opcion_d: opciones.d || 'Opción D',
-            respuesta_correcta: 'a',
-            tema_codigo: num <= 12 ? `COM-${String(num).padStart(2,'0')}` : `ESP-${String(Math.min(48, num - 12)).padStart(2,'0')}`,
-            justificacion: ''
-          });
-        }
-      }
-
-      return resultado;
-    }
-
     function App() {
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
       const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
@@ -388,14 +317,16 @@
       const [historialSimulacros, setHistorialSimulacros] = useState([]);
       const [fallosPendientes, setFallosPendientes] = useState([]);
 
-      // Módulo Incorporar Examen (IN)
+      // =======================================================================
+      // MÓDULO INCORPORAR EXAMEN (IN) CON MOTOR MULTIMODAL GEMINI
+      // =======================================================================
+      const [apiKeyGemini, setApiKeyGemini] = useState(() => localStorage.getItem("gemini_api_key") || "");
       const [archivoPdf, setArchivoPdf] = useState(null);
-      const [procesandoPdf, setProcesandoPdf] = useState(false);
-      const [textoManual, setTextoManual] = useState("");
+      const [procesandoVision, setProcesandoVision] = useState(false);
+      const [mensajeEstado, setMensajeEstado] = useState("");
       const [preguntasExtraidas, setPreguntasExtraidas] = useState([]);
-      const [plantillaRespuestas, setPlantillaRespuestas] = useState("");
       const [datosExamen, setDatosExamen] = useState({
-        titulo: "OEP 2023 — Ayudante de Archivo y Biblioteca",
+        titulo: "OEP 2023 — Ayudante de Archivo y Biblioteca (Diputación de Sevilla)",
         organismo: "Diputación Provincial de Sevilla",
         año: 2023,
         categoria: "Oficial"
@@ -588,89 +519,119 @@
         setExamenActivo(false);
       };
 
-      const procesarPdfDirecto = async () => {
+      // =======================================================================
+      // PROCESADO INTELIGENTE DEL PDF MEDIANTE VISIÓN MULTIMODAL
+      // =======================================================================
+      const procesarExamenConVision = async () => {
+        if (!apiKeyGemini.trim()) {
+          alert("Por favor introduce tu clave API de Google AI Studio.");
+          return;
+        }
+
         if (!archivoPdf) {
-          alert("Por favor selecciona primero el archivo PDF.");
+          alert("Por favor selecciona primero el archivo PDF del examen.");
           return;
         }
 
-        if (!window.pdfjsLib) {
-          alert("Error cargando el lector PDF del navegador.");
-          return;
-        }
-
-        setProcesandoPdf(true);
+        localStorage.setItem("gemini_api_key", apiKeyGemini.trim());
+        setProcesandoVision(true);
+        setMensajeEstado("Leyendo documento y preparando visión artificial...");
 
         try {
-          const fileReader = new FileReader();
-          fileReader.onload = async function() {
-            try {
-              const arrayBuffer = this.result;
-              const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-              let textoCompleto = '';
+          // 1. Convertir archivo a Base64
+          const base64Pdf = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const res = reader.result;
+              const base64 = res.split(',')[1];
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(archivoPdf);
+          });
 
-              for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                
-                let pageText = '';
-                let lastY = null;
-                for (const item of textContent.items) {
-                  if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
-                    pageText += '\n';
-                  } else if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
-                    pageText += ' ';
+          setMensajeEstado("Analizando examen completo y detectando soluciones oficiales...");
+
+          const promptInstrucciones = `
+Eres un asistente experto en oposiciones de Archivos y Bibliotecas.
+Analiza visualmente este examen oficial en PDF.
+
+INSTRUCCIONES CLAVE:
+1. Extrae TODAS las preguntas tipo test con sus cuatro opciones (A, B, C, D).
+2. Ignora encabezados de página, pies, números de página, sellos y firmas digitales con CSV.
+3. Si al final del PDF o en alguna página viene la plantilla oficial de soluciones, lee las respuestas correctas y asígnalas a cada pregunta ("a", "b", "c" o "d"). Si no viene la plantilla, pon "a" por defecto.
+4. Asigna a cada pregunta un código de tema adecuado (entre COM-01 y COM-12 para comunes, o ESP-01 a ESP-48 para archivística/bibliotecas).
+
+DEVOLUCIÓN OBLIGATORIA:
+Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicional. Estructura exacta por elemento:
+[
+  {
+    "numero": 1,
+    "tema_codigo": "ESP-01",
+    "enunciado": "Texto completo del enunciado...",
+    "opcion_a": "Texto de la opción A",
+    "opcion_b": "Texto de la opción B",
+    "opcion_c": "Texto de la opción C",
+    "opcion_d": "Texto de la opción D",
+    "respuesta_correcta": "b",
+    "justificacion": ""
+  }
+]
+`;
+
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyGemini.trim()}`;
+
+          const payload = {
+            contents: [
+              {
+                parts: [
+                  { text: promptInstrucciones },
+                  {
+                    inline_data: {
+                      mime_type: "application/pdf",
+                      data: base64Pdf
+                    }
                   }
-                  pageText += item.str;
-                  lastY = item.transform[5];
-                }
-
-                textoCompleto += '\n\n' + pageText;
+                ]
               }
-
-              setTextoManual(textoCompleto);
-              const extraidas = parsearTextoExamen(textoCompleto);
-              setPreguntasExtraidas(extraidas);
-            } catch (errInterno) {
-              alert("Error leyendo el contenido del PDF: " + errInterno.message);
-            } finally {
-              setProcesandoPdf(false);
+            ],
+            generationConfig: {
+              response_mime_type: "application/json"
             }
           };
-          fileReader.readAsArrayBuffer(archivoPdf);
-        } catch (e) {
-          alert("Error al procesar el archivo: " + e.message);
-          setProcesandoPdf(false);
-        }
-      };
 
-      const aplicarPlantillaRespuestas = () => {
-        if (!plantillaRespuestas.trim()) {
-          alert("Pega primero la plantilla de respuestas (ej: 1-B, 2-C, 3-A...).");
-          return;
-        }
-
-        const mapa = {};
-        const pares = plantillaRespuestas.match(/(\d{1,3})\s*[\:\-\.\s]\s*([a-dA-D])/g);
-
-        if (pares) {
-          pares.forEach(par => {
-            const m = par.match(/(\d{1,3})\s*[\:\-\.\s]\s*([a-dA-D])/);
-            if (m) {
-              mapa[parseInt(m[1])] = m[2].toLowerCase();
-            }
+          const respuesta = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
           });
-        }
 
-        if (Object.keys(mapa).length === 0) {
-          alert("No se reconocieron respuestas en la plantilla. Usa un formato como '1-A 2-B 3-C'.");
-          return;
-        }
+          if (!respuesta.ok) {
+            const errData = await respuesta.json();
+            throw new Error(errData?.error?.message || "Error en la petición a la API");
+          }
 
-        setPreguntasExtraidas(prev => prev.map(p => ({
-          ...p,
-          respuesta_correcta: mapa[p.numero] || p.respuesta_correcta
-        })));
+          const resultadoJson = await respuesta.json();
+          const textoRespuesta = resultadoJson.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (!textoRespuesta) {
+            throw new Error("No se recibió respuesta válida del motor de visión.");
+          }
+
+          const preguntasParseadas = JSON.parse(textoRespuesta);
+          if (!Array.isArray(preguntasParseadas) || preguntasParseadas.length === 0) {
+            throw new Error("No se detectaron preguntas en el formato esperado.");
+          }
+
+          setPreguntasExtraidas(preguntasParseadas);
+          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
+        } catch (err) {
+          console.error("Error en extracción:", err);
+          alert("Error procesando el PDF: " + err.message);
+          setMensajeEstado("");
+        } finally {
+          setProcesandoVision(false);
+        }
       };
 
       const guardarExamenCompletoEnSupabase = async () => {
@@ -696,7 +657,7 @@
             opcion_b: p.opcion_b || 'Opción B',
             opcion_c: p.opcion_c || 'Opción C',
             opcion_d: p.opcion_d || 'Opción D',
-            respuesta_correcta: p.respuesta_correcta || 'a',
+            respuesta_correcta: (p.respuesta_correcta || 'a').toLowerCase(),
             justificacion: p.justificacion || '',
             origen: datosExamen.titulo,
             año: parseInt(datosExamen.año) || 2023
@@ -704,9 +665,11 @@
 
           await ExamenService.crearLotePreguntas(preguntasParaInsertar);
 
+          alert(`¡Éxito! Examen "${datosExamen.titulo}" guardado con ${preguntasParaInsertar.length} preguntas en Supabase.`);
+
           setPreguntasExtraidas([]);
-          setTextoManual("");
           setArchivoPdf(null);
+          setMensajeEstado("");
           await recargarExamenes();
           setModuloActivo("oficiales");
         } catch (e) {
@@ -716,6 +679,9 @@
         }
       };
 
+      // =======================================================================
+      // SALA DE EXAMEN
+      // =======================================================================
       const lanzarExamenBD = async (examen) => {
         try {
           const raw = await ExamenService.obtenerPreguntasPorExamen(examen.id);
@@ -787,6 +753,9 @@
         }
       };
 
+      // =======================================================================
+      // MÉTODOS DE GESTIÓN AVANZADA (GA)
+      // =======================================================================
       const cargarPreguntasDeExamenGA = async (examen) => {
         setExamenSeleccionadoGA(examen);
         try {
@@ -1395,6 +1364,9 @@
                   </div>
                 )}
 
+                {/* ============================================================= */}
+                {/* 4. INCORPORAR UN EXAMEN (IN) — MOTOR CON VISIÓN MULTIMODAL */}
+                {/* ============================================================= */}
                 {moduloActivo === "ingesta" && (
                   <div className="space-y-6">
                     <div>
@@ -1402,13 +1374,41 @@
                         Incorporar un examen oficial
                       </h1>
                       <p className="text-xs text-slate-500 mt-1">
-                        Sube el cuestionario en PDF para extraer las preguntas directamente, aplica la plantilla de respuestas y guárdalo en Supabase.
+                        Sube cualquier PDF de convocatoria (incluso con fuentes corruptas, escaneado o a dos columnas). El motor visual detectará preguntas, opciones y plantillas automáticamente.
                       </p>
                     </div>
 
+                    {/* Paso 0: Clave de Google AI Studio */}
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                          1. Clave de Procesamiento Visual
+                        </h2>
+                        <a 
+                          href="https://aistudio.google.com" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-xs font-bold text-[#0F6252] hover:underline"
+                        >
+                          Obtener clave gratuita en Google AI Studio ↗
+                        </a>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Solo necesitas pegarla una vez en este dispositivo. Queda guardada de forma segura en tu navegador.
+                      </p>
+                      <input
+                        type="password"
+                        placeholder="Pega aquí tu clave API (ej: AIzaSy...)"
+                        value={apiKeyGemini}
+                        onChange={e => setApiKeyGemini(e.target.value)}
+                        className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
+                      />
+                    </div>
+
+                    {/* Paso 1: Datos del examen */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                        1. Datos de la convocatoria
+                        2. Datos de la convocatoria
                       </h2>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                         <div className="md:col-span-2">
@@ -1453,15 +1453,16 @@
                       </div>
                     </div>
 
+                    {/* Paso 2: Selección y procesamiento */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                        2. Cuestionario en PDF
+                        3. Cuestionario en PDF
                       </h2>
                       
-                      <div className="p-4 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div className="p-5 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
                         <div className="space-y-1 text-center md:text-left">
-                          <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona el PDF del examen</span>
-                          <span className="text-[11px] text-slate-400 block">El lector extraerá automáticamente las preguntas y opciones del documento.</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona el PDF de la oposición</span>
+                          <span className="text-[11px] text-slate-400 block">Funciona con cualquier PDF oficial de tribunales o diputaciones.</span>
                           <input 
                             type="file" 
                             accept=".pdf" 
@@ -1471,38 +1472,22 @@
                         </div>
 
                         <button
-                          onClick={procesarPdfDirecto}
-                          disabled={!archivoPdf || procesandoPdf}
-                          className="px-5 py-2.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
+                          onClick={procesarExamenConVision}
+                          disabled={!archivoPdf || procesandoVision}
+                          className="px-6 py-3 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
                         >
-                          {procesandoPdf ? "Extrayendo páginas..." : "⚡ Extraer preguntas del PDF"}
+                          {procesandoVision ? "Analizando páginas con visión..." : "⚡ Procesar examen con visión artificial"}
                         </button>
                       </div>
 
-                      {textoManual && (
-                        <div className="pt-2 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Texto extraído del documento:</span>
-                            <button
-                              onClick={() => {
-                                const parseadas = parsearTextoExamen(textoManual);
-                                setPreguntasExtraidas(parseadas);
-                              }}
-                              className="px-3 py-1 bg-stone-800 text-white rounded-lg text-xs font-bold hover:bg-stone-900"
-                            >
-                              🔄 Re-procesar texto
-                            </button>
-                          </div>
-                          <textarea
-                            rows={8}
-                            value={textoManual}
-                            onChange={e => setTextoManual(e.target.value)}
-                            className="w-full p-3 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
-                          />
+                      {mensajeEstado && (
+                        <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-medium">
+                          {mensajeEstado}
                         </div>
                       )}
                     </div>
 
+                    {/* Paso 3: Resultados detectados y guardado */}
                     {preguntasExtraidas.length > 0 && (
                       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-3">
@@ -1511,7 +1496,7 @@
                               {preguntasExtraidas.length} PREGUNTAS DETECTADAS
                             </span>
                             <h2 className="text-sm font-bold text-slate-800 dark:text-white mt-1">
-                              3. Asignar respuestas correctas y guardar
+                              4. Confirmar y guardar en Supabase
                             </h2>
                           </div>
 
@@ -1524,30 +1509,7 @@
                           </button>
                         </div>
 
-                        <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
-                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-                            Plantilla de soluciones oficiales (opcional)
-                          </label>
-                          <p className="text-[11px] text-slate-500">
-                            Pega aquí las soluciones oficiales para marcarlas de golpe. Admite: <code>1-B, 2-C, 3-A</code> o <code>1:B 2:C</code>.
-                          </p>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={plantillaRespuestas}
-                              onChange={e => setPlantillaRespuestas(e.target.value)}
-                              placeholder="Ej: 1-A 2-B 3-D 4-C 5-A..."
-                              className="flex-1 p-2 border border-slate-300 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-900 font-mono"
-                            />
-                            <button
-                              onClick={aplicarPlantillaRespuestas}
-                              className="px-4 py-2 bg-stone-800 text-white rounded-xl text-xs font-bold hover:bg-stone-900 shrink-0"
-                            >
-                              Aplicar plantilla
-                            </button>
-                          </div>
-                        </div>
-
+                        {/* Lista de preguntas extraídas con opciones */}
                         <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
                           {preguntasExtraidas.map((p, idx) => (
                             <div key={idx} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs space-y-2 bg-white dark:bg-slate-900">
@@ -1599,6 +1561,7 @@
                   </div>
                 )}
 
+                {/* 5. GESTIÓN AVANZADA (GA) */}
                 {moduloActivo === "gestion" && (
                   <div className="space-y-6">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -1641,7 +1604,7 @@
                                 className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold px-2.5 py-1.5 border border-rose-200 dark:border-rose-900 rounded-xl transition flex items-center gap-1 shrink-0"
                                 title="Eliminar examen completo y todas sus preguntas"
                               >
-                                🗑️ Borrar examen
+                                🗑️️ Borrar examen
                               </button>
                             </div>
 
