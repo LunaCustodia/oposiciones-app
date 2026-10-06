@@ -48,17 +48,15 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useCallback } = React;
 
-    // CREDENCIALES DIRECTAS DE TU PROYECTO SUPABASE
     const SUPABASE_URL = "https://zinocrzgztenwhyhjxyp.supabase.co";
     const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inppbm9jcnpnenRlbndoeWhqeHlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNzA2MzUsImV4cCI6MjEwNjg0NjYzNX0.LOdx0IuPhai6DWNMprWZkQMjg5xZcbsA07PIMY2YdAU";
     const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
     // =========================================================================
-    // TEMARIO CANÓNICO OFICIAL (60 TEMAS: 12 COMUNES + 48 ESPECÍFICOS)
+    // TEMARIO OFICIAL (60 TEMAS)
     // =========================================================================
-
     const TEMARIO_OFICIAL_60 = [
-      // --- MATERIAS COMUNES (12) ---
+      // 12 COMUNES
       { id: 1, codigo: "COM-01", bloque: "Común", numero: 1, titulo: "La Constitución de 1978: Principios Generales. Estructura. Los derechos y deberes fundamentales." },
       { id: 2, codigo: "COM-02", bloque: "Común", numero: 2, titulo: "La organización territorial del Estado español: Principios constitucionales. El Estatuto de Autonomía para Andalucía: derechos y deberes. Competencias." },
       { id: 3, codigo: "COM-03", bloque: "Común", numero: 3, titulo: "El régimen local español. La Administración Local en la Constitución de 1978. El principio de Autonomía: su significado y alcance. La Carta Europea de la Autonomía Local." },
@@ -72,7 +70,7 @@
       { id: 11, codigo: "COM-11", bloque: "Común", numero: 11, titulo: "Ley 19/2013, de 9 de diciembre, de Transparencia, Acceso a la Información Pública y Buen Gobierno y Ley 1/2014, de 24 de junio, de Transparencia Pública de Andalucía. Especial referencia al ámbito local." },
       { id: 12, codigo: "COM-12", bloque: "Común", numero: 12, titulo: "Nociones generales de la normativa estatal y autonómica en materia de Igualdad y violencia de Género. Medidas en el ámbito administrativo y laboral para promover la igualdad real y efectiva de las personas TRANS y LGTBI establecidas en la Ley 4/2023, de 28 de febrero." },
 
-      // --- MATERIAS ESPECÍFICAS (48) ---
+      // 48 ESPECÍFICOS
       { id: 13, codigo: "ESP-01", bloque: "Específico", numero: 1, titulo: "El documento. Concepto de documento. Clases de documentos. El documento de archivo." },
       { id: 14, codigo: "ESP-02", bloque: "Específico", numero: 2, titulo: "El expediente administrativo." },
       { id: 15, codigo: "ESP-03", bloque: "Específico", numero: 3, titulo: "El documento electrónico. Normativa, características específicas y requisitos en las administraciones públicas." },
@@ -156,38 +154,8 @@
           { id: "o7", letra: "C", texto: "Los documentos históricos pasan directamente a expurgo a los 10 años.", es_correcta: false },
           { id: "o8", letra: "D", texto: "Solo se aplica a la documentación generada en soporte papel tradicional.", es_correcta: false }
         ]
-      },
-      {
-        id: "p3",
-        origen: "oficial",
-        numero_orden: 3,
-        enunciado: "Conforme al artículo 33 de la Ley 7/1985 (LBRL), ¿a quién corresponde la presidencia de la Diputación Provincial?",
-        evidencia_texto: "Art. 33 LBRL: El Presidente de la Diputación es elegido por los Diputados Provinciales de entre ellos en la sesión constitutiva de la corporación.",
-        opciones: [
-          { id: "o9", letra: "A", texto: "Es designado directamente por el Delegado del Gobierno en la Comunidad Autónoma.", es_correcta: false },
-          { id: "o10", letra: "B", texto: "Es elegido por los Diputados Provinciales de entre ellos en la sesión constitutiva.", es_correcta: true },
-          { id: "o11", letra: "C", texto: "Al Alcalde del municipio con mayor censo electoral de la provincia.", es_correcta: false },
-          { id: "o12", letra: "D", texto: "Por sufragio universal directo de todos los vecinos de los municipios de la provincia.", es_correcta: false }
-        ]
-      },
-      {
-        id: "p4",
-        origen: "leyes",
-        numero_orden: 4,
-        enunciado: "De acuerdo con el Real Decreto Legislativo 5/2015 (TREBEP), las faltas muy graves prescriben a los:",
-        evidencia_texto: "Art. 97 TREBEP: Las infracciones muy graves prescribirán a los 3 años, las graves a los 2 años y las leves a los 6 meses.",
-        opciones: [
-          { id: "o13", letra: "A", texto: "Dos años desde su comisión.", es_correcta: false },
-          { id: "o14", letra: "B", texto: "Tres años desde su comisión.", es_correcta: true },
-          { id: "o15", letra: "C", texto: "Cuatro años improrrogables.", es_correcta: false },
-          { id: "o16", letra: "D", texto: "Seis meses en cualquier caso.", es_correcta: false }
-        ]
       }
     ];
-
-    // =========================================================================
-    // COMPONENTE PRINCIPAL
-    // =========================================================================
 
     function App() {
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
@@ -196,12 +164,12 @@
       const [moduloActivo, setModuloActivo] = useState("materiales");
       const [modoOscuro, setModoOscuro] = useState(false);
 
-      // Listas de archivos detectados en Supabase Storage
+      // Almacén detectado
+      const [bucketActivo, setBucketActivo] = useState("Temario");
       const [archivosComunes, setArchivosComunes] = useState([]);
       const [archivosEspecificos, setArchivosEspecificos] = useState([]);
-      const [cargandoArchivos, setCargandoArchivos] = useState(false);
+      const [cargandoArchivos, setCargandoArchivos] = useState(true);
 
-      // Filtro de bloque para la lista de temas
       const [filtroBloque, setFiltroBloque] = useState("todos");
 
       // Sala de examen
@@ -213,7 +181,6 @@
       const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
       const [examenCorregido, setExamenCorregido] = useState(false);
 
-      // Estado del formulario de incorporación
       const [tipoDestino, setTipoDestino] = useState("oficiales");
       const [accionTipo, setAccionTipo] = useState("nuevo");
 
@@ -222,76 +189,87 @@
         else document.documentElement.classList.remove("dark");
       }, [modoOscuro]);
 
-      // Cargar lista de archivos reales desde Supabase Storage
-      const cargarArchivosStorage = useCallback(async () => {
+      // Sincronización robusta con Supabase Storage (Prueba 'Temario' y 'temario')
+      const sincronizarArchivos = useCallback(async () => {
         if (!supabaseClient) return;
         setCargandoArchivos(true);
-        try {
-          const { data: dataCom } = await supabaseClient.storage.from('temario').list('Comunes', { limit: 100 });
-          if (dataCom) setArchivosComunes(dataCom.filter(f => f.name !== '.emptyFolderPlaceholder'));
 
-          const { data: dataEsp } = await supabaseClient.storage.from('temario').list('Especificos', { limit: 100 });
-          if (dataEsp) setArchivosEspecificos(dataEsp.filter(f => f.name !== '.emptyFolderPlaceholder'));
-        } catch (err) {
-          console.error("Error al consultar Storage:", err);
-        } finally {
-          setCargandoArchivos(false);
+        const probarBucket = async (bName) => {
+          try {
+            const { data: com } = await supabaseClient.storage.from(bName).list('Comunes', { limit: 100 });
+            const { data: esp } = await supabaseClient.storage.from(bName).list('Especificos', { limit: 100 });
+            
+            const comFiltrados = (com || []).filter(f => f.name && f.name !== '.emptyFolderPlaceholder');
+            const espFiltrados = (esp || []).filter(f => f.name && f.name !== '.emptyFolderPlaceholder');
+
+            if (comFiltrados.length > 0 || espFiltrados.length > 0) {
+              setBucketActivo(bName);
+              setArchivosComunes(comFiltrados);
+              setArchivosEspecificos(espFiltrados);
+              return true;
+            }
+          } catch (e) {
+            console.error("Error comprobando bucket:", bName, e);
+          }
+          return false;
+        };
+
+        const exitoMayus = await probarBucket('Temario');
+        if (!exitoMayus) {
+          await probarBucket('temario');
         }
+
+        setCargandoArchivos(false);
       }, []);
 
       useEffect(() => {
         if (autenticado) {
-          cargarArchivosStorage();
+          sincronizarArchivos();
         }
-      }, [autenticado, cargarArchivosStorage]);
+      }, [autenticado, sincronizarArchivos]);
 
-      // Función inteligente para emparejar cada tema con su archivo en Supabase Storage
+      // Localizador de archivo por tema
       const obtenerArchivoTema = useCallback((tema) => {
         const lista = tema.bloque === 'Común' ? archivosComunes : archivosEspecificos;
-        const numPadded = String(tema.numero).padStart(2, '0'); // "01", "02", ...
-        const numSingle = String(tema.numero); // "1", "2", ...
+        const numPadded = String(tema.numero).padStart(2, '0');
+        const numSingle = String(tema.numero);
 
-        // Busca coincidencia flexible insensible a mayúsculas
-        const encontrado = lista.find(f => {
-          const name = f.name.toLowerCase();
-          return name.includes(`tema_${numPadded}`) || 
-                 name.includes(`tema_${numSingle}_`) ||
-                 name.includes(`tema ${numPadded}`) || 
-                 name.includes(`tema ${numSingle} `) ||
-                 name.startsWith(`tema_${numPadded}`) ||
-                 name.startsWith(`tema${numPadded}`);
+        const coincidencia = lista.find(f => {
+          const n = f.name.toLowerCase();
+          return n.includes(`tema_${numPadded}`) || 
+                 n.includes(`tema_${numSingle}_`) ||
+                 n.includes(`tema ${numPadded}`) ||
+                 n.includes(`tema${numPadded}`) ||
+                 n.startsWith(`tema_${numPadded}`) ||
+                 n.startsWith(`tema_${numSingle}_`);
         });
 
-        return encontrado ? encontrado.name : null;
+        return coincidencia ? coincidencia.name : null;
       }, [archivosComunes, archivosEspecificos]);
 
-      // Abrir PDF en pestaña nueva
       const handleAbrirTema = (tema) => {
-        const nombreArchivo = obtenerArchivoTema(tema);
+        const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
-        if (nombreArchivo) {
-          const url = `${SUPABASE_URL}/storage/v1/object/public/temario/${carpeta}/${encodeURIComponent(nombreArchivo)}`;
+        if (nombre) {
+          const url = `${SUPABASE_URL}/storage/v1/object/public/${bucketActivo}/${carpeta}/${encodeURIComponent(nombre)}`;
           window.open(url, '_blank');
         } else {
-          alert(`No se ha encontrado el PDF del tema ${tema.codigo} en la carpeta '${carpeta}' de Supabase Storage. Sube el archivo para abrirlo.`);
+          alert(`El PDF de ${tema.codigo} no se detecta en la carpeta ${carpeta}. Comprueba el nombre del archivo.`);
         }
       };
 
-      // Descargar PDF directamente
       const handleDescargarTema = (tema) => {
-        const nombreArchivo = obtenerArchivoTema(tema);
+        const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
-        if (nombreArchivo) {
-          const url = `${SUPABASE_URL}/storage/v1/object/public/temario/${carpeta}/${encodeURIComponent(nombreArchivo)}`;
+        if (nombre) {
+          const url = `${SUPABASE_URL}/storage/v1/object/public/${bucketActivo}/${carpeta}/${encodeURIComponent(nombre)}`;
           const a = document.createElement('a');
           a.href = url;
-          a.download = nombreArchivo;
+          a.download = nombre;
           a.target = '_blank';
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-        } else {
-          alert(`El archivo del tema ${tema.codigo} aún no está disponible para descargar.`);
         }
       };
 
@@ -316,9 +294,7 @@
         setExamenActivo(true);
       };
 
-      // ----------------------------------------------------------------------
-      // 1. LOGIN PRIVADO
-      // ----------------------------------------------------------------------
+      // LOGIN
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -364,9 +340,7 @@
         );
       }
 
-      // ----------------------------------------------------------------------
-      // 2. SALA DE EXAMEN
-      // ----------------------------------------------------------------------
+      // EXAMEN
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
         const resp = respuestas[p?.id];
@@ -492,9 +466,7 @@
         );
       }
 
-      // ----------------------------------------------------------------------
-      // 3. NAVEGACIÓN Y PANELES
-      // ----------------------------------------------------------------------
+      // NAVEGACIÓN Y DASHBOARD
       const navItems = [
         { id: "inicio", sigla: "IN", label: "Inicio" },
         { id: "oficiales", sigla: "OF", label: "Exámenes oficiales" },
@@ -517,7 +489,6 @@
       return (
         <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950">
           
-          {/* SIDEBAR */}
           <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
             <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800">
               <div className="w-8 h-8 rounded-xl bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
@@ -554,7 +525,6 @@
             </nav>
           </aside>
 
-          {/* MAIN CONTAINER */}
           <div className="flex-1 flex flex-col min-w-0">
             
             <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-6 flex items-center justify-between shrink-0">
@@ -667,20 +637,28 @@
                   </>
                 )}
 
-                {/* 2. MATERIALES & TEMARIO CANÓNICO (LOS 60 TEMAS) */}
+                {/* 2. MATERIALES (SINCRONIZADO EN TIEMPO REAL CON SUPABASE) */}
                 {(moduloActivo === "materiales" || moduloActivo === "temario") && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                          Temario Oficial y Materiales (60 Fuentes Canónicas)
+                        <h2 className="text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>Temario Oficial y Materiales (60 Fuentes Canónicas)</span>
+                          {cargandoArchivos ? (
+                            <span className="text-[10px] font-normal text-[#0F6252] bg-[#EBF7F4] px-2.5 py-0.5 rounded-full animate-pulse">
+                              Sincronizando con Supabase...
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                              {archivosComunes.length} Comunes · {archivosEspecificos.length} Específicos
+                            </span>
+                          )}
                         </h2>
                         <p className="text-xs text-slate-500">
                           Lectura y descarga sincronizada con tu almacenamiento en Supabase.
                         </p>
                       </div>
                       
-                      {/* Pestañas de Filtrado */}
                       <div className="inline-flex rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 shrink-0">
                         <button
                           onClick={() => setFiltroBloque("todos")}
@@ -705,49 +683,46 @@
 
                     <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
                       {temasFiltrados.map(t => {
-                        const archivoReal = obtenerArchivoTema(t);
+                        const nombreArchivo = obtenerArchivoTema(t);
 
                         return (
                           <div key={t.codigo} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
                             
-                            {/* Código Badge */}
                             <div className="w-20 shrink-0">
                               <span className="font-extrabold text-sm text-[#0F6252] dark:text-emerald-400 tracking-tight">
                                 {t.codigo}
                               </span>
                             </div>
 
-                            {/* Título y archivo enlazado */}
                             <div className="flex-1 min-w-0 pr-4">
                               <h3 className="text-xs md:text-sm font-semibold text-slate-900 dark:text-white leading-snug">
                                 {t.titulo}
                               </h3>
                               <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-                                {archivoReal ? (
-                                  <span className="text-emerald-700 dark:text-emerald-400 font-medium">✓ {archivoReal}</span>
+                                {nombreArchivo ? (
+                                  <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ {nombreArchivo}</span>
                                 ) : (
-                                  <span className="text-slate-400">PDF pendiente de subir a Supabase</span>
+                                  <span className="text-amber-600 font-medium">Buscando archivo en carpeta {t.bloque === 'Común' ? 'Comunes' : 'Especificos'}...</span>
                                 )}
                               </p>
                             </div>
 
-                            {/* Botones Abrir / Descargar */}
                             <div className="flex items-center gap-2 shrink-0">
                               <button
                                 onClick={() => handleAbrirTema(t)}
                                 className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
-                                  archivoReal 
+                                  nombreArchivo 
                                     ? 'bg-[#0F6252] hover:bg-[#0c4d40] text-white shadow-2xs' 
-                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
                                 }`}
                               >
                                 Abrir tema
                               </button>
                               <button
                                 onClick={() => handleDescargarTema(t)}
-                                disabled={!archivoReal}
+                                disabled={!nombreArchivo}
                                 className={`px-4 py-2 rounded-xl text-xs font-bold border transition ${
-                                  archivoReal
+                                  nombreArchivo
                                     ? 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
                                     : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 opacity-60 cursor-not-allowed'
                                 }`}
@@ -763,7 +738,7 @@
                   </div>
                 )}
 
-                {/* 3. INCORPORAR EXAMEN (INGESTA PDF) */}
+                {/* 3. INCORPORAR EXAMEN */}
                 {moduloActivo === "ingesta" && (
                   <div className="space-y-4">
                     <div>
