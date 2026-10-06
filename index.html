@@ -93,7 +93,7 @@
               opcion_c: pregunta.opcion_c,
               opcion_d: pregunta.opcion_d,
               respuesta_correcta: (pregunta.respuesta_correcta || 'a').toLowerCase(),
-              justificacion: pregunta.justificacion
+              justificacion: pregunta.justificacion || ''
             })
             .eq('id', pregunta.id)
             .select();
@@ -279,6 +279,40 @@
       { id: 59, codigo: "ESP-47", bloque: "Específico", numero: 47, titulo: "Catálogos colectivos. Concepto y fines. Catálogos colectivos en España." },
       { id: 60, codigo: "ESP-48", bloque: "Específico", numero: 48, titulo: "Sistemas integrados de gestión bibliotecaria." }
     ];
+
+    // =========================================================================
+    // FUNCIÓN DE AUTO-REPARACIÓN PARA EVITAR ERRORES DE JSON CORTADO
+    // =========================================================================
+    function repararJsonArray(rawText) {
+      let s = rawText.trim();
+      s = s.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+
+      // 1. Intento directo
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+
+      // 2. Si se cortó por agotar tokens, reparamos cerrando en el último '}'
+      const lastClose = s.lastIndexOf('}');
+      if (lastClose !== -1) {
+        const repaired = s.substring(0, lastClose + 1) + '\n]';
+        try {
+          const parsed = JSON.parse(repaired);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e2) {
+          const prevClose = s.lastIndexOf('}', lastClose - 1);
+          if (prevClose !== -1) {
+            try {
+              const parsed = JSON.parse(s.substring(0, prevClose + 1) + '\n]');
+              if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            } catch (e3) {}
+          }
+        }
+      }
+
+      throw new Error("No se pudo reconstruir el JSON del examen. Intenta de nuevo.");
+    }
 
     function App() {
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
@@ -518,7 +552,7 @@
       };
 
       // =======================================================================
-      // PROCESADO INTELIGENTE CON TEMARIO INTEGRADO Y PREGUNTAS DE RESERVA
+      // PROCESADO INTELIGENTE OPTIMIZADO (SIN AGOTAR TOKENS Y CON AUTO-REPARACIÓN)
       // =======================================================================
       const procesarExamenConVision = async () => {
         const keyLimpia = apiKeyGemini.trim();
@@ -534,7 +568,7 @@
 
         localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
-        setMensajeEstado("Leyendo documento PDF y preparando visión artificial...");
+        setMensajeEstado("Leyendo documento PDF...");
 
         try {
           const base64Pdf = await new Promise((resolve, reject) => {
@@ -548,43 +582,39 @@
             reader.readAsDataURL(archivoPdf);
           });
 
-          // Catálogo completo de los 60 temas para que la IA clasifique con precisión
+          // Catálogo conciso de los 60 temas
           const catalogoTemasGuia = TEMARIO_OFICIAL_60.map(t => `${t.codigo}: ${t.titulo}`).join('\n');
 
           const promptInstrucciones = `
-Eres un preparador y calificador experto en oposiciones de Archivos y Bibliotecas de la Administración Pública española.
+Eres un preparador experto en oposiciones de Archivos y Bibliotecas de la Administración Pública.
 Analiza visualmente este examen oficial en PDF.
 
-DIRECTIVAS ESTRICTAS Y OBLIGATORIAS:
-1. EXTRAE TODAS LAS PREGUNTAS DEL EXAMEN:
-   - Extrae tanto las preguntas ordinarias (ej. 1 a 75) como las PREGUNTAS DE RESERVA (ej. 10 de reserva o las que vengan al final).
-   - ¡NO OMITAS LAS PREGUNTAS DE RESERVA! En las preguntas de reserva, añade al inicio del enunciado "[RESERVA] " para que queden claramente identificadas.
-   - Cada pregunta debe contener obligatoriamente su enunciado y las cuatro opciones (A, B, C, D).
-
+DIRECTIVAS ESTRICTAS:
+1. EXTRAE TODAS LAS PREGUNTAS (tanto ordinarias como LAS PREGUNTAS DE RESERVA).
+   - En las preguntas de reserva, añade "[RESERVA] " al inicio del enunciado.
+   - Cada pregunta debe contener: numero, tema_codigo, enunciado, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta.
 2. PLANTILLA OFICIAL DE SOLUCIONES:
-   - Lee con máxima atención la plantilla de respuestas que acompaña al examen (al final o en sus páginas).
-   - Asigna la respuesta correcta oficial ("a", "b", "c" o "d") a CADA UNA de las preguntas ordinarias Y de las preguntas de reserva.
-
-3. ASIGNACIÓN PRECISA DEL TEMA DEL TEMARIO OFICIAL:
-   - No inventes códigos. Compara el contenido de la pregunta con este catálogo oficial de 60 temas y asigna el código exacto que mejor corresponda:
-
+   - Lee con máxima atención la plantilla oficial incluida en el documento y asigna la respuesta oficial ("a", "b", "c" o "d") a cada pregunta ordinaria y de reserva.
+3. TEMA OFICIAL:
+   - Asigna a cada pregunta el código exacto de este catálogo oficial de 60 temas:
 ${catalogoTemasGuia}
 
-FORMATO DE SALIDA OBLIGATORIO:
-Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin markdown.
-[
-  {
-    "numero": 1,
-    "tema_codigo": "ESP-01",
-    "enunciado": "Texto completo del enunciado...",
-    "opcion_a": "Texto de la opción A",
-    "opcion_b": "Texto de la opción B",
-    "opcion_c": "Texto de la opción C",
-    "opcion_d": "Texto de la opción D",
-    "respuesta_correcta": "b",
-    "justificacion": ""
-  }
-]
+OPTIMIZACIÓN DE TOKENS OBLIGATORIA:
+- Sé conciso en el JSON.
+- NO agregues ningún campo de "justificacion" ni comentarios.
+- Devuelve ÚNICAMENTE un array JSON válido sin formato markdown previo ni posterior.
+
+Estructura por elemento:
+{
+  "numero": 1,
+  "tema_codigo": "ESP-01",
+  "enunciado": "...",
+  "opcion_a": "...",
+  "opcion_b": "...",
+  "opcion_c": "...",
+  "opcion_d": "...",
+  "respuesta_correcta": "b"
+}
 `;
 
           const payload = {
@@ -603,7 +633,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin ma
             ],
             generationConfig: {
               responseMimeType: "application/json",
-              maxOutputTokens: 8192
+              maxOutputTokens: 32768
             }
           };
 
@@ -618,7 +648,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin ma
 
           for (const modelo of modelosCandidatos) {
             try {
-              setMensajeEstado(`Analizando examen completo (ordinarias + reserva) con ${modelo}...`);
+              setMensajeEstado(`Analizando examen completo (ordinarias + reservas) con ${modelo}...`);
               const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${keyLimpia}`;
 
               const respuesta = await fetch(endpoint, {
@@ -638,14 +668,8 @@ Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin ma
 
               if (!textoRespuesta) continue;
 
-              let rawText = textoRespuesta.trim();
-              if (rawText.startsWith('```json')) {
-                rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-              } else if (rawText.startsWith('```')) {
-                rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-              }
-
-              const parsed = JSON.parse(rawText);
+              // Parseo con auto-reparación integrada
+              const parsed = repararJsonArray(textoRespuesta);
               if (Array.isArray(parsed) && parsed.length > 0) {
                 preguntasParseadas = parsed;
                 break;
@@ -2127,3 +2151,4 @@ Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, sin ma
   </script>
 </body>
 </html>
+ 
