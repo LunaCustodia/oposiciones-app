@@ -38,6 +38,13 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- PDF.js para procesado directo del PDF en el navegador -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.01em; }
   </style>
@@ -75,16 +82,6 @@
           .from('preguntas')
           .select('*')
           .eq('examen_id', examenId)
-          .order('created_at', { ascending: true });
-        if (error) throw error;
-        return data || [];
-      },
-
-      async obtenerTodasLasPreguntas() {
-        if (!supabaseClient) return [];
-        const { data, error } = await supabaseClient
-          .from('preguntas')
-          .select('*')
           .order('created_at', { ascending: true });
         if (error) throw error;
         return data || [];
@@ -136,6 +133,16 @@
           .select();
         if (error) throw error;
         return data[0];
+      },
+
+      async crearLotePreguntas(preguntas) {
+        if (!supabaseClient || preguntas.length === 0) return [];
+        const { data, error } = await supabaseClient
+          .from('preguntas')
+          .insert(preguntas)
+          .select();
+        if (error) throw error;
+        return data || [];
       },
 
       async eliminarExamenCompleto(examenId) {
@@ -198,7 +205,7 @@
       }
     };
 
-    // Adaptador de formato de preguntas de Supabase a la interfaz de test
+    // Adaptador de formato de preguntas
     const normalizarPregunta = (p, idx) => ({
       id: p.id,
       numero_orden: idx + 1,
@@ -284,11 +291,67 @@
       { id: 60, codigo: "ESP-48", bloque: "Específico", numero: 48, titulo: "Sistemas integrados de gestión bibliotecaria." }
     ];
 
+    // Parser directo de texto para extraer preguntas tipo test
+    function parsearTextoExamen(texto) {
+      if (!texto || texto.trim().length === 0) return [];
+
+      const lineas = texto.split('\n');
+      const preguntas = [];
+      let pregActual = null;
+
+      // Expresión para detectar el número de pregunta (ej: "1.-", "1.", "1)")
+      const regexNumero = /^\s*(\d{1,3})\s*[\.\-\)]\s*(.*)$/;
+      // Expresión para opciones A), B), C), D)
+      const regexOpcion = /^\s*\(?([a-dA-D])\)[\.\-\s]\s*(.*)$/;
+
+      for (let i = 0; i < lineas.length; i++) {
+        const linea = lineas[i].trim();
+        if (!linea) continue;
+
+        const matchNum = linea.match(regexNumero);
+        if (matchNum) {
+          if (pregActual && pregActual.enunciado) {
+            preguntas.push(pregActual);
+          }
+          pregActual = {
+            numero: parseInt(matchNum[1]),
+            enunciado: matchNum[2],
+            opcion_a: '',
+            opcion_b: '',
+            opcion_c: '',
+            opcion_d: '',
+            respuesta_correcta: 'a',
+            tema_codigo: 'ESP-01',
+            justificacion: ''
+          };
+          continue;
+        }
+
+        const matchOpt = linea.match(regexOpcion);
+        if (matchOpt && pregActual) {
+          const letra = matchOpt[1].toLowerCase();
+          pregActual[`opcion_${letra}`] = matchOpt[2];
+          continue;
+        }
+
+        // Si no es nueva pregunta ni opción, acumula texto al enunciado
+        if (pregActual && !pregActual.opcion_a) {
+          pregActual.enunciado += ' ' + linea;
+        }
+      }
+
+      if (pregActual && pregActual.enunciado) {
+        preguntas.push(pregActual);
+      }
+
+      return preguntas;
+    }
+
     function App() {
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
       const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
       const [passwordInput, setPasswordInput] = useState("");
-      const [moduloActivo, setModuloActivo] = useState("oficiales");
+      const [moduloActivo, setModuloActivo] = useState("ingesta");
       const [modoOscuro, setModoOscuro] = useState(false);
 
       const [bucketActivo, setBucketActivo] = useState("Temario");
@@ -297,11 +360,10 @@
       const [cargandoArchivos, setCargandoArchivos] = useState(true);
       const [filtroBloque, setFiltroBloque] = useState("todos");
 
-      // Estado de exámenes cargados desde Supabase
       const [examenesBD, setExamenesBD] = useState([]);
       const [cargandoExamenes, setCargandoExamenes] = useState(false);
 
-      // Estado de la sala de examen
+      // Sala de examen
       const [examenActivo, setExamenActivo] = useState(false);
       const [tituloExamenActivo, setTituloExamenActivo] = useState("Simulacro Oficial");
       const [preguntasTest, setPreguntasTest] = useState([]);
@@ -311,26 +373,38 @@
       const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
       const [examenCorregido, setExamenCorregido] = useState(false);
 
-      // Estado para Gestión Avanzada (GA)
+      // Gestión avanzada
       const [examenSeleccionadoGA, setExamenSeleccionadoGA] = useState(null);
       const [preguntasGA, setPreguntasGA] = useState([]);
       const [preguntaEnEdicion, setPreguntaEnEdicion] = useState(null);
       const [modalNuevoExamen, setModalNuevoExamen] = useState(false);
       const [nuevoExamenForm, setNuevoExamenForm] = useState({ titulo: "", organismo: "Diputación Provincial de Sevilla", año: 2023, categoria: "Oficial" });
 
-      // Estado de Historial y Errores
+      // Historial
       const [historialSimulacros, setHistorialSimulacros] = useState([]);
       const [fallosPendientes, setFallosPendientes] = useState([]);
 
-      const [tipoDestino, setTipoDestino] = useState("oficiales");
-      const [accionTipo, setAccionTipo] = useState("nuevo");
+      // =======================================================================
+      // ESTADOS DEL MÓDULO INCORPORAR EXAMEN (IN)
+      // =======================================================================
+      const [archivoPdf, setArchivoPdf] = useState(null);
+      const [procesandoPdf, setProcesandoPdf] = useState(false);
+      const [textoManual, setTextoManual] = useState("");
+      const [preguntasExtraidas, setPreguntasExtraidas] = useState([]);
+      const [plantillaRespuestas, setPlantillaRespuestas] = useState("");
+      const [datosExamen, setDatosExamen] = useState({
+        titulo: "OEP 2023 — Ayudante de Archivo y Biblioteca",
+        organismo: "Diputación Provincial de Sevilla",
+        año: 2023,
+        categoria: "Oficial"
+      });
+      const [guardandoEnSupabase, setGuardandoEnSupabase] = useState(false);
 
       useEffect(() => {
         if (modoOscuro) document.documentElement.classList.add("dark");
         else document.documentElement.classList.remove("dark");
       }, [modoOscuro]);
 
-      // Cargar lista de exámenes de Supabase
       const recargarExamenes = useCallback(async () => {
         setCargandoExamenes(true);
         try {
@@ -361,7 +435,7 @@
         }
       }, [autenticado, recargarExamenes, recargarHistorialYFallos]);
 
-      // Sincronización con Supabase Storage (Bucket Temario)
+      // Sincronización Storage Temario
       const sincronizarArchivos = useCallback(async () => {
         if (!supabaseClient) return;
         setCargandoArchivos(true);
@@ -400,7 +474,6 @@
         }
       }, [autenticado, sincronizarArchivos]);
 
-      // Localizador flexible del archivo por tema
       const obtenerArchivoTema = useCallback((tema) => {
         const lista = tema.bloque === 'Común' ? archivosComunes : archivosEspecificos;
         const numPadded = String(tema.numero).padStart(2, '0');
@@ -419,7 +492,6 @@
         return coincidencia ? coincidencia.name : null;
       }, [archivosComunes, archivosEspecificos]);
 
-      // Abrir PDF en pestaña sin descargar
       const handleAbrirTema = async (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
@@ -488,7 +560,6 @@
         }
       };
 
-      // Descargar tema a disco
       const handleDescargarTema = (tema) => {
         const nombre = obtenerArchivoTema(tema);
         const carpeta = tema.bloque === 'Común' ? 'Comunes' : 'Especificos';
@@ -516,7 +587,144 @@
         setExamenActivo(false);
       };
 
-      // Iniciar simulacro desde la BD
+      // =======================================================================
+      // PROCESADO REAL DE EXAMEN PDF (MÓDULO IN)
+      // =======================================================================
+      const procesarPdfDirecto = async () => {
+        if (!archivoPdf) {
+          alert("Por favor selecciona primero un archivo PDF.");
+          return;
+        }
+
+        if (!window.pdfjsLib) {
+          alert("Error cargando el lector de PDF del navegador. Comprueba tu conexión.");
+          return;
+        }
+
+        setProcesandoPdf(true);
+
+        try {
+          const fileReader = new FileReader();
+          fileReader.onload = async function() {
+            try {
+              const arrayBuffer = this.result;
+              const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+              let textoCompleto = '';
+
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const textoPagina = textContent.items.map(item => item.str).join(' ');
+                textoCompleto += '\n' + textoPagina;
+              }
+
+              if (textoCompleto.trim().length < 50) {
+                alert("El archivo PDF parece ser una imagen escaneada sin texto seleccionable. Puedes copiar el texto y pegarlo en el recuadro inferior.");
+                setTextoManual("");
+              } else {
+                setTextoManual(textoCompleto);
+                const extraidas = parsearTextoExamen(textoCompleto);
+                setPreguntasExtraidas(extraidas);
+                if (extraidas.length === 0) {
+                  alert("Se extrajo el texto pero no se reconoció el formato estándar (1.- Enunciado, a)...). Revisa el texto en el recuadro inferior.");
+                }
+              }
+            } catch (errInterno) {
+              alert("Error leyendo las páginas del PDF: " + errInterno.message);
+            } finally {
+              setProcesandoPdf(false);
+            }
+          };
+          fileReader.readAsArrayBuffer(archivoPdf);
+        } catch (e) {
+          alert("Error al procesar el archivo: " + e.message);
+          setProcesandoPdf(false);
+        }
+      };
+
+      const aplicarPlantillaRespuestas = () => {
+        if (!plantillaRespuestas.trim()) {
+          alert("Pega primero la plantilla de respuestas (ej: 1-B, 2-C, 3-A...).");
+          return;
+        }
+
+        const mapa = {};
+        const pares = plantillaRespuestas.match(/(\d{1,3})\s*[\:\-\.\s]\s*([a-dA-D])/g);
+
+        if (pares) {
+          pares.forEach(par => {
+            const m = par.match(/(\d{1,3})\s*[\:\-\.\s]\s*([a-dA-D])/);
+            if (m) {
+              mapa[parseInt(m[1])] = m[2].toLowerCase();
+            }
+          });
+        }
+
+        if (Object.keys(mapa).length === 0) {
+          alert("No se reconocieron respuestas en la plantilla. Usa un formato como '1-A 2-B 3-C'.");
+          return;
+        }
+
+        setPreguntasExtraidas(prev => prev.map(p => ({
+          ...p,
+          respuesta_correcta: mapa[p.numero] || p.respuesta_correcta
+        })));
+
+        alert(`Se han asignado las respuestas correctas a ${Object.keys(mapa).length} preguntas.`);
+      };
+
+      const guardarExamenCompletoEnSupabase = async () => {
+        if (preguntasExtraidas.length === 0) {
+          alert("No hay preguntas extraídas para guardar.");
+          return;
+        }
+
+        setGuardandoEnSupabase(true);
+        try {
+          // 1. Crear el examen
+          const examenCreado = await ExamenService.crearExamen({
+            titulo: datosExamen.titulo,
+            organismo: datosExamen.organismo,
+            año: parseInt(datosExamen.año) || 2023,
+            categoria: datosExamen.categoria
+          });
+
+          // 2. Preparar el lote de preguntas
+          const preguntasParaInsertar = preguntasExtraidas.map(p => ({
+            examen_id: examenCreado.id,
+            tema_codigo: p.tema_codigo || 'ESP-01',
+            enunciado: p.enunciado,
+            opcion_a: p.opcion_a || 'Opción A',
+            opcion_b: p.opcion_b || 'Opción B',
+            opcion_c: p.opcion_c || 'Opción C',
+            opcion_d: p.opcion_d || 'Opción D',
+            respuesta_correcta: p.respuesta_correcta || 'a',
+            justificacion: p.justificacion || '',
+            origen: datosExamen.titulo,
+            año: parseInt(datosExamen.año) || 2023
+          }));
+
+          // 3. Insertar lote
+          await ExamenService.crearLotePreguntas(preguntasParaInsertar);
+
+          alert(`¡Éxito! Examen "${datosExamen.titulo}" guardado con ${preguntasParaInsertar.length} preguntas en Supabase.`);
+          
+          // Limpiar y redirigir a OF
+          setPreguntasExtraidas([]);
+          setTextoManual("");
+          setArchivoPdf(null);
+          await recargarExamenes();
+          setModuloActivo("oficiales");
+        } catch (e) {
+          alert("Error guardando en Supabase: " + e.message);
+        } finally {
+          setGuardandoEnSupabase(false);
+        }
+      };
+
+      // =======================================================================
+      // SALA DE EXAMEN
+      // =======================================================================
       const lanzarExamenBD = async (examen) => {
         try {
           const raw = await ExamenService.obtenerPreguntasPorExamen(examen.id);
@@ -529,7 +737,7 @@
           setTituloExamenActivo(examen.titulo);
           setIndicePregunta(0);
           setRespuestas({});
-          setSegundos(normalizadas.length * 90); // 1.5 min por pregunta
+          setSegundos(normalizadas.length * 90);
           setExamenCorregido(false);
           setExamenActivo(true);
         } catch (err) {
@@ -537,7 +745,6 @@
         }
       };
 
-      // Temporizador del examen
       useEffect(() => {
         if (!examenActivo || examenCorregido) return;
         const timer = setInterval(() => {
@@ -546,7 +753,6 @@
         return () => clearInterval(timer);
       }, [examenActivo, examenCorregido]);
 
-      // Finalizar examen y registrar en Supabase
       const finalizarYRegistrarExamen = async () => {
         setExamenCorregido(true);
 
@@ -591,7 +797,7 @@
       };
 
       // =======================================================================
-      // MÉTODOS DE GESTIÓN AVANZADA (GA): EDITAR, BORRAR PREGUNTA Y BORRAR EXAMEN
+      // MÉTODOS DE GESTIÓN AVANZADA (GA)
       // =======================================================================
       const cargarPreguntasDeExamenGA = async (examen) => {
         setExamenSeleccionadoGA(examen);
@@ -604,7 +810,7 @@
       };
 
       const handleBorrarExamenCompleto = async (examenId, titulo) => {
-        const confirmar = confirm(`¿ELIMINAR EXAMEN COMPLETO?\n\n"${titulo}"\n\nATENCIÓN: Se eliminará el examen y TODAS las preguntas que contiene de forma automática e irreversible.`);
+        const confirmar = confirm(`¿ELIMINAR EXAMEN COMPLETO?\n\n"${titulo}"\n\nSe eliminará el examen y TODAS las preguntas que contiene.`);
         if (!confirmar) return;
 
         try {
@@ -614,14 +820,14 @@
             setPreguntasGA([]);
           }
           await recargarExamenes();
-          alert("Examen y preguntas eliminados correctamente.");
+          alert("Examen eliminado correctamente.");
         } catch (err) {
           alert("Error eliminando examen: " + err.message);
         }
       };
 
       const handleBorrarPreguntaIndividual = async (preguntaId) => {
-        if (!confirm("¿Eliminar esta pregunta definitivamente de la base de datos?")) return;
+        if (!confirm("¿Eliminar esta pregunta definitivamente?")) return;
         try {
           await ExamenService.eliminarPregunta(preguntaId);
           setPreguntasGA(prev => prev.filter(p => p.id !== preguntaId));
@@ -638,7 +844,7 @@
           setPreguntasGA(prev => prev.map(p => p.id === guardada.id ? guardada : p));
           setPreguntaEnEdicion(null);
           await recargarExamenes();
-          alert("Pregunta guardada correctamente.");
+          alert("Pregunta guardada.");
         } catch (err) {
           alert("Error guardando la pregunta: " + err.message);
         }
@@ -706,7 +912,7 @@
       }
 
       // =======================================================================
-      // SALA DE EXAMEN INTERACTIVO
+      // SALA DE EXAMEN
       // =======================================================================
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
@@ -734,7 +940,6 @@
           return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
         };
 
-        // Cálculos tras corrección
         let stats = null;
         if (examenCorregido) {
           let ac = 0, fa = 0, bl = 0;
@@ -818,13 +1023,12 @@
 
                 {examenCorregido && p.evidencia_texto && (
                   <div className="mt-4 p-4 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-200 text-xs leading-relaxed">
-                    <span className="font-bold text-amber-400 block mb-1">📖 Justificación jurídica / técnica:</span>
+                    <span className="font-bold text-amber-400 block mb-1">📖 Justificación:</span>
                     {p.evidencia_texto}
                   </div>
                 )}
               </div>
 
-              {/* Estadísticas de resultado si está corregido */}
               {examenCorregido && stats && (
                 <div className="my-6 bg-slate-950 border border-slate-800 rounded-2xl p-5">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Resultado de la prueba</h3>
@@ -910,7 +1114,6 @@
       return (
         <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950">
           
-          {/* BARRA LATERAL */}
           <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
             <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800">
               <div className="w-8 h-8 rounded-xl bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
@@ -947,7 +1150,6 @@
             </nav>
           </aside>
 
-          {/* CONTENEDOR CENTRAL */}
           <div className="flex-1 flex flex-col min-w-0">
             
             <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-6 flex items-center justify-between shrink-0">
@@ -1060,7 +1262,7 @@
                   </>
                 )}
 
-                {/* 2. EXÁMENES OFICIALES (OF) - CONEXIÓN REAL CON SUPABASE */}
+                {/* 2. EXÁMENES OFICIALES (OF) */}
                 {moduloActivo === "oficiales" && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1068,9 +1270,14 @@
                         <h2 className="text-lg font-bold text-slate-900 dark:text-white">Exámenes oficiales de convocatorias</h2>
                         <p className="text-xs text-slate-500">Cargados en tiempo real desde tu base de datos de Supabase.</p>
                       </div>
-                      <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-stone-800 hover:bg-stone-900 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 self-start sm:self-center">
-                        ⚙️ Administrar / Editar preguntas
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setModuloActivo("ingesta")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
+                          + Incorporar examen PDF
+                        </button>
+                        <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-stone-800 text-white text-xs font-bold rounded-xl">
+                          ⚙️ Gestionar banco
+                        </button>
+                      </div>
                     </div>
 
                     {cargandoExamenes ? (
@@ -1080,9 +1287,9 @@
                     ) : examenesBD.length === 0 ? (
                       <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
                         <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No hay exámenes dados de alta en Supabase.</p>
-                        <p className="text-xs text-slate-400 mt-1 mb-4">Crea tu primer examen en el panel de Gestión Avanzada.</p>
-                        <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
-                          Ir a Gestión Avanzada
+                        <p className="text-xs text-slate-400 mt-1 mb-4">Sube tu primer examen PDF desde el módulo de incorporación.</p>
+                        <button onClick={() => setModuloActivo("ingesta")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
+                          Incorporar examen PDF
                         </button>
                       </div>
                     ) : (
@@ -1104,11 +1311,9 @@
                                   <span className="text-rose-600 font-semibold">-0,33 pts penalización</span>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button onClick={() => lanzarExamenBD(ex)} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
-                                  Hacer simulacro →
-                                </button>
-                              </div>
+                              <button onClick={() => lanzarExamenBD(ex)} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition">
+                                Hacer simulacro →
+                              </button>
                             </div>
                           );
                         })}
@@ -1216,82 +1421,222 @@
                   </div>
                 )}
 
-                {/* 4. INCORPORAR UN EXAMEN (IN) */}
+                {/* 4. INCORPORAR UN EXAMEN (IN) - LIMPIO Y 100% OPERATIVO */}
                 {moduloActivo === "ingesta" && (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     <div>
                       <h1 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                        Incorporar un examen
+                        Incorporar un examen oficial
                       </h1>
                       <p className="text-xs text-slate-500 mt-1">
-                        Sube el cuestionario y su plantilla o regístralo directamente en el panel de Gestión Avanzada.
+                        Sube el cuestionario en PDF para extraer las preguntas directamente, aplica la plantilla de respuestas y guárdalo en Supabase.
                       </p>
                     </div>
 
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 space-y-6">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+                    {/* Paso 1: Datos identificativos */}
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                        1. Datos de la convocatoria
+                      </h2>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                        <div className="md:col-span-2">
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Título del examen</label>
+                          <input
+                            type="text"
+                            value={datosExamen.titulo}
+                            onChange={e => setDatosExamen({...datosExamen, titulo: e.target.value})}
+                            className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-medium"
+                          />
+                        </div>
                         <div>
-                          <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                            Subir examen PDF y registrar en el sistema
-                          </h2>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Puedes dar de alta la convocatoria y registrar las preguntas desde la herramienta de gestión.
-                          </p>
-                        </div>
-                        <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#0F6252] text-white text-xs font-bold rounded-xl">
-                          Abrir Gestor de Preguntas →
-                        </button>
-                      </div>
-
-                      <fieldset className="border-2 border-[#0F6252] rounded-2xl p-4 pt-2 space-y-3">
-                        <legend className="px-2 font-bold text-slate-900 dark:text-white text-xs">
-                          ¿En qué apartado quieres incorporarlo?
-                        </legend>
-
-                        <label className="flex items-start gap-3 cursor-pointer">
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Año</label>
                           <input
-                            type="radio"
-                            name="destino"
-                            checked={tipoDestino === "oficiales"}
-                            onChange={() => setTipoDestino("oficiales")}
-                            className="mt-0.5 text-[#0F6252] focus:ring-[#0F6252] w-4 h-4"
+                            type="number"
+                            value={datosExamen.año}
+                            onChange={e => setDatosExamen({...datosExamen, año: e.target.value})}
+                            className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-medium"
                           />
-                          <div className="text-xs">
-                            <span className="font-bold text-slate-900 dark:text-white">Exámenes oficiales.</span>{' '}
-                            <span className="text-slate-600 dark:text-slate-400">Se guardará en este apartado; la procedencia verificada se registra por separado.</span>
-                          </div>
-                        </label>
-
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="destino"
-                            checked={tipoDestino === "otros"}
-                            onChange={() => setTipoDestino("otros")}
-                            className="mt-0.5 text-[#0F6252] focus:ring-[#0F6252] w-4 h-4"
-                          />
-                          <div className="text-xs">
-                            <span className="font-bold text-slate-900 dark:text-white">Otros exámenes.</span>{' '}
-                            <span className="text-slate-600 dark:text-slate-400">Para academias, manuales, simulacros, repertorios y cuestionarios no oficiales.</span>
-                          </div>
-                        </label>
-                      </fieldset>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center">
-                          <span className="text-xs font-bold text-slate-800 dark:text-white block mb-1">Cuestionario en PDF</span>
-                          <input type="file" accept=".pdf" className="text-xs text-slate-500 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-[#0F6252] file:text-white file:font-semibold" />
                         </div>
-                        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center">
-                          <span className="text-xs font-bold text-slate-800 dark:text-white block mb-1">Plantilla de Soluciones (opcional)</span>
-                          <input type="file" accept=".pdf" className="text-xs text-slate-500 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:bg-slate-800 file:text-white file:font-semibold" />
+                        <div>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Organismo convocante</label>
+                          <input
+                            type="text"
+                            value={datosExamen.organismo}
+                            onChange={e => setDatosExamen({...datosExamen, organismo: e.target.value})}
+                            className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-medium"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Categoría</label>
+                          <select
+                            value={datosExamen.categoria}
+                            onChange={e => setDatosExamen({...datosExamen, categoria: e.target.value})}
+                            className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-medium"
+                          >
+                            <option value="Oficial">Examen Oficial</option>
+                            <option value="Simulacro">Simulacro</option>
+                            <option value="Otros">Otros / Editorial</option>
+                          </select>
                         </div>
                       </div>
                     </div>
+
+                    {/* Paso 2: Selección y procesamiento del PDF */}
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                        2. Cuestionario en PDF
+                      </h2>
+                      
+                      <div className="p-4 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div className="space-y-1 text-center md:text-left">
+                          <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona el PDF del examen</span>
+                          <span className="text-[11px] text-slate-400 block">El navegador extraerá automáticamente los enunciados y las opciones A, B, C y D.</span>
+                          <input 
+                            type="file" 
+                            accept=".pdf" 
+                            onChange={e => setArchivoPdf(e.target.files[0] || null)}
+                            className="text-xs text-slate-500 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-[#0F6252] file:text-white file:font-bold cursor-pointer mt-2" 
+                          />
+                        </div>
+
+                        <button
+                          onClick={procesarPdfDirecto}
+                          disabled={!archivoPdf || procesandoPdf}
+                          className="px-5 py-2.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
+                        >
+                          {procesandoPdf ? "Extrayendo páginas..." : "⚡ Extraer preguntas del PDF"}
+                        </button>
+                      </div>
+
+                      {/* Alternativa: Texto manual si el PDF es imagen */}
+                      <div className="pt-2">
+                        <details className="text-xs text-slate-500">
+                          <summary className="cursor-pointer font-bold text-[#0F6252] hover:underline">
+                            ¿El PDF es una imagen escaneada? Pulsa aquí para pegar el texto directamente
+                          </summary>
+                          <div className="mt-3 space-y-2">
+                            <textarea
+                              rows={6}
+                              value={textoManual}
+                              onChange={e => setTextoManual(e.target.value)}
+                              placeholder="Pega aquí el texto del examen (ej: 1.- ¿Qué es el principio de procedencia? a) ... b) ... c) ... d) ...)"
+                              className="w-full p-3 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
+                            />
+                            <button
+                              onClick={() => {
+                                const parseadas = parsearTextoExamen(textoManual);
+                                setPreguntasExtraidas(parseadas);
+                                alert(`Se han detectado ${parseadas.length} preguntas en el texto pegado.`);
+                              }}
+                              className="px-4 py-2 bg-slate-800 text-white rounded-xl font-bold"
+                            >
+                              Parsear texto pegado
+                            </button>
+                          </div>
+                        </details>
+                      </div>
+                    </div>
+
+                    {/* Paso 3: Plantilla de respuestas y vista previa */}
+                    {preguntasExtraidas.length > 0 && (
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-3">
+                          <div>
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded uppercase">
+                              {preguntasExtraidas.length} PREGUNTAS DETECTADAS
+                            </span>
+                            <h2 className="text-sm font-bold text-slate-800 dark:text-white mt-1">
+                              3. Asignar respuestas correctas y guardar
+                            </h2>
+                          </div>
+
+                          <button
+                            onClick={guardarExamenCompletoEnSupabase}
+                            disabled={guardandoEnSupabase}
+                            className="px-6 py-2.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50"
+                          >
+                            {guardandoEnSupabase ? "Guardando en Supabase..." : "💾 Guardar Examen en Supabase"}
+                          </button>
+                        </div>
+
+                        {/* Plantilla de respuestas */}
+                        <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                            Plantilla de soluciones oficiales (opcional)
+                          </label>
+                          <p className="text-[11px] text-slate-500">
+                            Pega aquí las soluciones para marcarlas de golpe. Admite formatos como: <code>1-B, 2-C, 3-A</code> o <code>1:B 2:C</code>.
+                          </p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={plantillaRespuestas}
+                              onChange={e => setPlantillaRespuestas(e.target.value)}
+                              placeholder="Ej: 1-A 2-B 3-D 4-C 5-A..."
+                              className="flex-1 p-2 border border-slate-300 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-900 font-mono"
+                            />
+                            <button
+                              onClick={aplicarPlantillaRespuestas}
+                              className="px-4 py-2 bg-stone-800 text-white rounded-xl text-xs font-bold hover:bg-stone-900 shrink-0"
+                            >
+                              Aplicar plantilla
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Listado de preguntas para revisión rápida */}
+                        <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                          {preguntasExtraidas.map((p, idx) => (
+                            <div key={idx} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs space-y-2 bg-white dark:bg-slate-900">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-800 dark:text-white">Pregunta {p.numero}</span>
+                                <div className="flex items-center gap-3">
+                                  <label className="text-[11px] font-semibold text-slate-500">Tema:</label>
+                                  <select
+                                    value={p.tema_codigo}
+                                    onChange={e => {
+                                      const nTema = e.target.value;
+                                      setPreguntasExtraidas(prev => prev.map((item, i) => i === idx ? {...item, tema_codigo: nTema} : item));
+                                    }}
+                                    className="p-1 border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-800 text-[11px]"
+                                  >
+                                    {TEMARIO_OFICIAL_60.map(t => (
+                                      <option key={t.codigo} value={t.codigo}>{t.codigo}</option>
+                                    ))}
+                                  </select>
+
+                                  <label className="text-[11px] font-semibold text-slate-500">Correcta:</label>
+                                  <select
+                                    value={p.respuesta_correcta}
+                                    onChange={e => {
+                                      const nResp = e.target.value;
+                                      setPreguntasExtraidas(prev => prev.map((item, i) => i === idx ? {...item, respuesta_correcta: nResp} : item));
+                                    }}
+                                    className="p-1 border border-emerald-300 rounded bg-emerald-50 dark:bg-emerald-950 font-bold text-emerald-800 dark:text-emerald-300 text-[11px]"
+                                  >
+                                    <option value="a">A</option>
+                                    <option value="b">B</option>
+                                    <option value="c">C</option>
+                                    <option value="d">D</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <p className="font-medium text-slate-900 dark:text-slate-100">{p.enunciado}</p>
+                              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                                <div className={p.respuesta_correcta === 'a' ? 'font-bold text-emerald-700' : ''}>A) {p.opcion_a}</div>
+                                <div className={p.respuesta_correcta === 'b' ? 'font-bold text-emerald-700' : ''}>B) {p.opcion_b}</div>
+                                <div className={p.respuesta_correcta === 'c' ? 'font-bold text-emerald-700' : ''}>C) {p.opcion_c}</div>
+                                <div className={p.respuesta_correcta === 'd' ? 'font-bold text-emerald-700' : ''}>D) {p.opcion_d}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 5. GESTIÓN AVANZADA (GA) - CONTROL TOTAL: EDITAR Y BORRAR */}
+                {/* 5. GESTIÓN AVANZADA (GA) */}
                 {moduloActivo === "gestion" && (
                   <div className="space-y-6">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -1307,7 +1652,6 @@
                       </button>
                     </div>
 
-                    {/* Lista de Exámenes */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {examenesBD.map(ex => {
                         const numPreguntas = ex.preguntas?.[0]?.count || 0;
@@ -1355,7 +1699,6 @@
                       })}
                     </div>
 
-                    {/* Editor de preguntas del examen seleccionado */}
                     {examenSeleccionadoGA && (
                       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-2">
@@ -1437,7 +1780,6 @@
                       </div>
                     )}
 
-                    {/* MODAL DE EDICIÓN / ALTA DE PREGUNTA */}
                     {preguntaEnEdicion && (
                       <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
                         <form onSubmit={handleGuardarPreguntaEditada} className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
@@ -1478,7 +1820,7 @@
                           </div>
 
                           <div>
-                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Enunciado de la pregunta</label>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Enunciado</label>
                             <textarea
                               rows={3}
                               value={preguntaEnEdicion.enunciado}
@@ -1496,7 +1838,6 @@
                                 type="text"
                                 value={preguntaEnEdicion[`opcion_${opt}`] || ''}
                                 onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, [`opcion_${opt}`]: e.target.value})}
-                                placeholder={`Texto de la respuesta ${opt.toUpperCase()}...`}
                                 className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
                                 required
                               />
@@ -1504,12 +1845,11 @@
                           ))}
 
                           <div>
-                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Evidencia / Justificación Jurídica</label>
+                            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Justificación Jurídica</label>
                             <textarea
                               rows={2}
                               value={preguntaEnEdicion.justificacion || ''}
                               onChange={e => setPreguntaEnEdicion({...preguntaEnEdicion, justificacion: e.target.value})}
-                              placeholder="Artículo de ley o norma de referencia..."
                               className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
                             />
                           </div>
@@ -1533,11 +1873,10 @@
                       </div>
                     )}
 
-                    {/* MODAL PARA CREAR NUEVO EXAMEN */}
                     {modalNuevoExamen && (
                       <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
                         <form onSubmit={handleCrearExamenNuevo} className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 text-xs">
-                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white">Crear Nuevo Examen / Convocatoria</h3>
+                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white">Crear Nuevo Examen</h3>
                           
                           <div>
                             <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Título del Examen</label>
@@ -1557,7 +1896,6 @@
                               type="text"
                               value={nuevoExamenForm.organismo}
                               onChange={e => setNuevoExamenForm({...nuevoExamenForm, organismo: e.target.value})}
-                              placeholder="Ej: Diputación Provincial de Sevilla"
                               className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
                               required
                             />
@@ -1637,17 +1975,11 @@
                           </div>
                           <button 
                             onClick={async () => {
-                              const todas = await ExamenService.obtenerTodasLasPreguntas();
-                              if (todas.length > 0) {
-                                setPreguntasTest(todas.map((p, idx) => normalizarPregunta(p, idx)));
-                                setTituloExamenActivo(`Test Ley: ${ley.codigo}`);
-                                setIndicePregunta(0);
-                                setRespuestas({});
-                                setSegundos(todas.length * 90);
-                                setExamenCorregido(false);
-                                setExamenActivo(true);
+                              const examenes = await ExamenService.obtenerExamenes();
+                              if (examenes.length > 0) {
+                                lanzarExamenBD(examenes[0]);
                               } else {
-                                alert("No hay preguntas registradas todavía.");
+                                alert("No hay exámenes oficiales registrados todavía.");
                               }
                             }} 
                             className="mt-3.5 w-full py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition"
@@ -1670,8 +2002,8 @@
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center">
                       <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center mx-auto mb-2 font-bold text-xs">OT</div>
                       <h3 className="font-bold text-sm text-slate-900 dark:text-white">Bandeja de otros materiales</h3>
-                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">Puedes cargar exámenes de editoriales independientes desde la zona de gestión.</p>
-                      <button onClick={() => setModuloActivo("gestion")} className="px-4 py-2 bg-[#7B1FA2] text-white text-xs font-bold rounded-xl">
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">Puedes cargar exámenes de editoriales independientes desde la zona de incorporación.</p>
+                      <button onClick={() => setModuloActivo("ingesta")} className="px-4 py-2 bg-[#7B1FA2] text-white text-xs font-bold rounded-xl">
                         Subir examen de academia →
                       </button>
                     </div>
