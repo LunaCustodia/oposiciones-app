@@ -317,9 +317,7 @@
       const [historialSimulacros, setHistorialSimulacros] = useState([]);
       const [fallosPendientes, setFallosPendientes] = useState([]);
 
-      // =======================================================================
-      // MÓDULO INCORPORAR EXAMEN (IN) CON MOTOR MULTIMODAL GEMINI
-      // =======================================================================
+      // Módulo Incorporar Examen (IN)
       const [apiKeyGemini, setApiKeyGemini] = useState(() => localStorage.getItem("gemini_api_key") || "");
       const [archivoPdf, setArchivoPdf] = useState(null);
       const [procesandoVision, setProcesandoVision] = useState(false);
@@ -520,7 +518,7 @@
       };
 
       // =======================================================================
-      // PROCESADO INTELIGENTE DEL PDF MEDIANTE VISIÓN MULTIMODAL CON DETECCIÓN DINÁMICA
+      // PROCESADO INTELIGENTE DEL PDF (GEMINI 3.8 FLASH DIRECTO CON RESPALDO)
       // =======================================================================
       const procesarExamenConVision = async () => {
         const keyLimpia = apiKeyGemini.trim();
@@ -536,35 +534,10 @@
 
         localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
-        setMensajeEstado("Verificando modelos disponibles en tu cuenta de Google AI...");
+        setMensajeEstado("Leyendo documento PDF...");
 
         try {
-          // 1. Detección automática del modelo activo en Google AI
-          const modelsRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyLimpia}`);
-          if (!modelsRes.ok) {
-            const errD = await modelsRes.json();
-            throw new Error(errD?.error?.message || "Clave API incorrecta o no válida.");
-          }
-          const modelsData = await modelsRes.json();
-          const lista = modelsData.models || [];
-
-          // Seleccionar el mejor modelo Flash que soporte generateContent
-          const modeloElegido = lista.find(m => 
-            m.supportedGenerationMethods?.includes('generateContent') && 
-            /gemini.*flash/i.test(m.name)
-          ) || lista.find(m => 
-            m.supportedGenerationMethods?.includes('generateContent') && 
-            /gemini/i.test(m.name)
-          );
-
-          if (!modeloElegido) {
-            throw new Error("No se encontró ningún modelo Gemini disponible para tu clave.");
-          }
-
-          const modelName = modeloElegido.name; // Ej: "models/gemini-2.0-flash" o "models/gemini-2.5-flash"
-          setMensajeEstado(`Cargando documento y enviando al motor (${modelName.replace('models/', '')})...`);
-
-          // 2. Convertir PDF a Base64
+          // 1. Convertir PDF a Base64
           const base64Pdf = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => {
@@ -575,8 +548,6 @@
             reader.onerror = reject;
             reader.readAsDataURL(archivoPdf);
           });
-
-          setMensajeEstado("Analizando examen visualmente y desglosando preguntas y opciones...");
 
           const promptInstrucciones = `
 Eres un asistente experto en oposiciones de Archivos y Bibliotecas.
@@ -605,8 +576,6 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
 ]
 `;
 
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${keyLimpia}`;
-
           const payload = {
             contents: [
               {
@@ -626,38 +595,61 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
             }
           };
 
-          const respuesta = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
+          // Lista ordenada de modelos modernos (el primero es gemini-3.8-flash, recomendado por Google)
+          const modelosCandidatos = [
+            'gemini-3.8-flash',
+            'gemini-3.5-flash',
+            'gemini-3.1-flash-lite'
+          ];
 
-          if (!respuesta.ok) {
-            const errData = await respuesta.json();
-            throw new Error(errData?.error?.message || "Error en la petición a Google AI");
+          let preguntasParseadas = null;
+          let errorFinal = "";
+
+          for (const modelo of modelosCandidatos) {
+            try {
+              setMensajeEstado(`Analizando examen con ${modelo}...`);
+              const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${keyLimpia}`;
+
+              const respuesta = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+
+              if (!respuesta.ok) {
+                const errData = await respuesta.json();
+                errorFinal = errData?.error?.message || `HTTP ${respuesta.status}`;
+                continue; // Probar siguiente modelo si este falla
+              }
+
+              const resultadoJson = await respuesta.json();
+              const textoRespuesta = resultadoJson.candidates?.[0]?.content?.parts?.[0]?.text;
+
+              if (!textoRespuesta) continue;
+
+              let rawText = textoRespuesta.trim();
+              if (rawText.startsWith('```json')) {
+                rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+              } else if (rawText.startsWith('```')) {
+                rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+              }
+
+              const parsed = JSON.parse(rawText);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                preguntasParseadas = parsed;
+                break; // Éxito
+              }
+            } catch (errLoop) {
+              errorFinal = errLoop.message;
+            }
           }
 
-          const resultadoJson = await respuesta.json();
-          const textoRespuesta = resultadoJson.candidates?.[0]?.content?.parts?.[0]?.text;
-
-          if (!textoRespuesta) {
-            throw new Error("No se recibió respuesta válida del motor de visión.");
-          }
-
-          let rawText = textoRespuesta.trim();
-          if (rawText.startsWith('```json')) {
-            rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-          } else if (rawText.startsWith('```')) {
-            rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-          }
-
-          const preguntasParseadas = JSON.parse(rawText);
-          if (!Array.isArray(preguntasParseadas) || preguntasParseadas.length === 0) {
-            throw new Error("No se detectaron preguntas en el examen.");
+          if (!preguntasParseadas) {
+            throw new Error(errorFinal || "No se pudieron extraer preguntas con los modelos disponibles.");
           }
 
           setPreguntasExtraidas(preguntasParseadas);
-          setMensajeEstado(`¡Completado con éxito! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
+          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas limpias con sus opciones.`);
         } catch (err) {
           console.error("Error en extracción:", err);
           alert("Error procesando el PDF: " + err.message);
@@ -819,7 +811,7 @@ Devuelve ÚNICAMENTE un array JSON válido sin formato markdown ni texto adicion
         if (!confirm("¿Eliminar esta pregunta definitivamente?")) return;
         try {
           await ExamenService.eliminarPregunta(preguntaId);
-          setPreguntasGA(prev => prev.filter(p => p.id !== personaId));
+          setPreguntasGA(prev => prev.filter(p => p.id !== preguntaId));
           await recargarExamenes();
         } catch (err) {
           alert("Error eliminando pregunta: " + err.message);
