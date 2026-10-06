@@ -307,3 +307,668 @@
                 <span className="text-slate-600">|</span>
                 <span className="text-slate-300 font-bold">{formatTiempo(segundos)}</span>
               </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMostrarEvidencia(v => !v)}
+                  className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900 text-[11px] text-slate-300 hover:bg-slate-800"
+                >
+                  Evidencia [E]
+                </button>
+                {!examenCorregido ? (
+                  <button
+                    onClick={() => confirm("¿Deseas finalizar y corregir?") && setExamenCorregido(true)}
+                    className="px-2.5 py-1 rounded bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-[11px]"
+                  >
+                    Finalizar
+                  </button>
+                ) : (
+                  <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold text-[10px]">
+                    CORREGIDO
+                  </span>
+                )}
+              </div>
+            </header>
+
+            <main className="flex-1 max-w-3xl mx-auto w-full p-4 md:p-6 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-xs font-mono text-slate-400">
+                  <span>PREGUNTA {p.numero_orden} DE {preguntasTest.length}</span>
+                  <button onClick={toggleDuda} className="text-amber-400 hover:underline">
+                    {resp?.dudosa ? '★ Dudosa marcada' : '☆ Marcar dudosa'}
+                  </button>
+                </div>
+                <h2 className="text-sm md:text-base font-medium text-white leading-relaxed">{p.enunciado}</h2>
+                <div className="space-y-2 pt-2">
+                  {p.opciones.map(op => {
+                    const sel = resp?.opcion_id === op.id;
+                    let cls = 'border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-800/60';
+                    if (examenCorregido) {
+                      if (op.es_correcta) cls = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
+                      else if (sel) cls = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
+                    } else if (sel) {
+                      cls = 'border-[#0F6252] bg-[#0F6252]/20 text-white font-semibold';
+                    }
+
+                    return (
+                      <button
+                        key={op.id}
+                        onClick={() => responder(op.id, op.letra)}
+                        className={`w-full text-left p-2.5 rounded-lg border text-xs flex items-start gap-2.5 transition ${cls}`}
+                      >
+                        <span className="font-mono font-bold px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 text-[11px]">{op.letra}</span>
+                        <span>{op.texto}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                <button
+                  disabled={indicePregunta === 0}
+                  onClick={() => setIndicePregunta(i => i - 1)}
+                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
+                >
+                  ← Anterior
+                </button>
+                <div className="text-xs font-mono text-slate-500">
+                  {indicePregunta + 1} / {preguntasTest.length}
+                </div>
+                <button
+                  disabled={indicePregunta === preguntasTest.length - 1}
+                  onClick={() => setIndicePregunta(i => i + 1)}
+                  className="px-3 py-1.5 rounded border border-slate-800 text-xs font-mono disabled:opacity-30"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </main>
+
+            {mostrarEvidencia && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+                <div className="bg-slate-950 border border-slate-800 max-w-lg w-full p-4 rounded-xl space-y-3">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="text-xs font-mono font-bold text-slate-300">EVIDENCIA / FUENTE P.{p.numero_orden}</span>
+                    <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 font-mono">✕</button>
+                  </div>
+                  <p className="text-xs font-serif text-slate-200 leading-relaxed bg-slate-900 p-3 rounded border border-slate-800">
+                    {p.evidencia_texto}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ----------------------------------------------------------------------
+      // VISTA 3: NAVEGACIÓN Y CONTENIDO POR MÓDULOS
+      // ----------------------------------------------------------------------
+      const navItems = [
+        { id: "inicio", sigla: "IN", label: "Inicio" },
+        { id: "oficiales", sigla: "OF", label: "Exámenes oficiales" },
+        { id: "temario", sigla: "MT", label: "Mi temario" },
+        { id: "leyes", sigla: "LE", label: "Leyes y normas" },
+        { id: "otros", sigla: "OT", label: "Otros exámenes" },
+        { id: "errores", sigla: "RE", label: "Repasar errores" },
+        { id: "resultados", sigla: "MR", label: "Mis resultados" },
+        { id: "materiales", sigla: "MA", label: "Materiales e ingesta" },
+        { id: "gestion", sigla: "GA", label: "Gestión avanzada" },
+        { id: "ayuda", sigla: "AY", label: "Ayuda y manual" },
+      ];
+
+      return (
+        <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950 font-sans">
+          
+          {/* BARRA LATERAL IZQUIERDA */}
+          <aside className="w-56 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex flex-col shrink-0">
+            <div className="p-3.5 flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800/80">
+              <div className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs shrink-0">
+                AB
+              </div>
+              <div className="leading-tight truncate">
+                <div className="font-bold text-xs text-slate-900 dark:text-white truncate">Archivo & Biblioteca</div>
+                <div className="text-[10px] text-slate-400 truncate">Tu espacio de estudio</div>
+              </div>
+            </div>
+
+            <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+              {navItems.map(item => {
+                const activo = moduloActivo === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setModuloActivo(item.id)}
+                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs font-medium transition text-left ${
+                      activo
+                        ? 'bg-[#EBF7F4] text-[#0F6252] font-semibold dark:bg-[#0F6252]/20 dark:text-emerald-300'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded flex items-center justify-center font-mono text-[10px] font-bold shrink-0 ${
+                      activo ? 'bg-[#0F6252] text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                    }`}>
+                      {item.sigla}
+                    </span>
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </aside>
+
+          {/* CONTENIDO CENTRAL */}
+          <div className="flex-1 flex flex-col min-w-0">
+            
+            <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 px-5 flex items-center justify-between shrink-0">
+              <div className="text-xs text-slate-500 font-medium capitalize">
+                {navItems.find(n => n.id === moduloActivo)?.label}
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <button 
+                  onClick={() => setModuloActivo("resultados")}
+                  className="px-2.5 py-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 font-medium"
+                >
+                  Mis resultados
+                </button>
+                <button 
+                  onClick={() => setModuloActivo("ayuda")}
+                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
+                >
+                  <span>?</span> Ayuda
+                </button>
+                <button
+                  onClick={() => setModoOscuro(!modoOscuro)}
+                  className="px-2.5 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1"
+                >
+                  ◑ {modoOscuro ? 'Claro' : 'Oscuro'}
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="px-3 py-1 bg-[#102A43] hover:bg-slate-900 text-white rounded-lg font-medium flex items-center gap-1 ml-1"
+                >
+                  <span>↩</span> Salir
+                </button>
+              </div>
+            </header>
+
+            <main className="flex-1 p-5 md:p-6 overflow-y-auto">
+              <div className="max-w-5xl mx-auto space-y-4">
+                
+                {/* -------------------------------------------------------------
+                    PANTALLA: INICIO
+                -------------------------------------------------------------- */}
+                {moduloActivo === "inicio" && (
+                  <>
+                    <div>
+                      <span className="font-mono text-[10px] font-bold text-[#0F6252] tracking-wider uppercase">INICIO</span>
+                      <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white tracking-tight mt-0.5">
+                        Tu espacio de estudio
+                      </h1>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        Selecciona una categoría de test para entrenar o repasa tus fallos acumulados.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                        <div>
+                          <div className="flex items-center justify-between mb-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">OF</span>
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-semibold">Tribunal</span>
+                          </div>
+                          <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Exámenes oficiales</h3>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">Convocatorias reales con recortes del tribunal y plantillas.</p>
+                        </div>
+                        <button onClick={() => setModuloActivo("oficiales")} className="mt-3 w-full py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition">
+                          Ver exámenes →
+                        </button>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                        <div>
+                          <div className="flex items-center justify-between mb-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#3F51B5] text-white flex items-center justify-center font-bold text-xs font-mono">MT</span>
+                            <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">60 Temas</span>
+                          </div>
+                          <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Mi temario</h3>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">12 temas comunes y 48 específicos con cita literal.</p>
+                        </div>
+                        <button onClick={() => setModuloActivo("temario")} className="mt-3 w-full py-1.5 bg-[#3F51B5] hover:bg-[#303f9f] text-white text-xs font-semibold rounded-lg transition">
+                          Ver temario →
+                        </button>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                        <div>
+                          <div className="flex items-center justify-between mb-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#E65100] text-white flex items-center justify-center font-bold text-xs font-mono">LE</span>
+                            <span className="px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">Normativa</span>
+                          </div>
+                          <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Leyes íntegras</h3>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">Plazos, mayorías y competencias con artículo en pantalla.</p>
+                        </div>
+                        <button onClick={() => setModuloActivo("leyes")} className="mt-3 w-full py-1.5 bg-[#E65100] hover:bg-[#c44400] text-white text-xs font-semibold rounded-lg transition">
+                          Ver leyes →
+                        </button>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between hover:shadow-xs transition">
+                        <div>
+                          <div className="flex items-center justify-between mb-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#7B1FA2] text-white flex items-center justify-center font-bold text-xs font-mono">OT</span>
+                            <span className="px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[10px] font-semibold">Academias</span>
+                          </div>
+                          <h3 className="font-bold text-slate-900 dark:text-white text-xs mb-1">Otros exámenes</h3>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">Manuales, editoriales y simulacros de preparación.</p>
+                        </div>
+                        <button onClick={() => setModuloActivo("otros")} className="mt-3 w-full py-1.5 bg-[#7B1FA2] hover:bg-[#6a1b9a] text-white text-xs font-semibold rounded-lg transition">
+                          Ver test →
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#EBF7F4] dark:bg-[#0F6252]/10 border border-[#b2dfd2] dark:border-[#0F6252]/40 rounded-xl p-3.5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-lg bg-[#0F6252] text-white flex items-center justify-center font-bold text-xs font-mono">RE</span>
+                        <div>
+                          <div className="text-xs font-bold text-[#0F6252] dark:text-emerald-300">Cuaderno de errores prioritario</div>
+                          <div className="text-[11px] text-slate-600 dark:text-slate-400">Preguntas falladas pendientes de 3 aciertos consecutivos.</div>
+                        </div>
+                      </div>
+                      <button onClick={() => setModuloActivo("errores")} className="px-3 py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition shrink-0">
+                        Repasar fallos →
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: EXÁMENES OFICIALES (OF)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "oficiales" && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Exámenes oficiales de convocatorias</h2>
+                        <p className="text-xs text-slate-500">Exámenes reales con evidencias recortadas del tribunal original.</p>
+                      </div>
+                      <button onClick={() => setModuloActivo("materiales")} className="px-3 py-1.5 bg-[#0F6252] text-white text-xs font-bold rounded-lg">
+                        + Subir nuevo examen PDF
+                      </button>
+                    </div>
+
+                    <div className="grid gap-2">
+                      {EXAMENES_OFICIALES.map(ex => (
+                        <div key={ex.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">{ex.titulo}</span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-mono text-[10px]">{ex.anio}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex gap-3 font-mono">
+                              <span>{ex.preguntas} preguntas</span>
+                              <span>•</span>
+                              <span>{ex.reservas} de reserva</span>
+                              <span>•</span>
+                              <span className="text-rose-500 font-semibold">{ex.penalizacion}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => iniciarExamen()} className="px-3 py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-lg transition">
+                              Hacer simulacro →
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: MI TEMARIO (MT) - 60 TEMAS
+                -------------------------------------------------------------- */}
+                {moduloActivo === "temario" && (
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Programa Oficial (60 Temas)</h2>
+                        <p className="text-xs text-slate-500">12 temas comunes y 48 específicos para generar test temáticos.</p>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-0.5">
+                        <button
+                          onClick={() => setFiltroBloqueTemario("todos")}
+                          className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${filtroBloqueTemario === "todos" ? 'bg-[#0F6252] text-white font-bold' : 'text-slate-600 dark:text-slate-400'}`}
+                        >
+                          Todos (60)
+                        </button>
+                        <button
+                          onClick={() => setFiltroBloqueTemario("Común")}
+                          className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${filtroBloqueTemario === "Común" ? 'bg-[#0F6252] text-white font-bold' : 'text-slate-600 dark:text-slate-400'}`}
+                        >
+                          Comunes (12)
+                        </button>
+                        <button
+                          onClick={() => setFiltroBloqueTemario("Específico")}
+                          className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${filtroBloqueTemario === "Específico" ? 'bg-[#0F6252] text-white font-bold' : 'text-slate-600 dark:text-slate-400'}`}
+                        >
+                          Específicos (48)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-mono text-slate-500">
+                            <th className="p-2.5 w-14 text-center">Tema</th>
+                            <th className="p-2.5 w-24">Bloque</th>
+                            <th className="p-2.5">Título oficial del tema</th>
+                            <th className="p-2.5 w-24 text-center">Preguntas</th>
+                            <th className="p-2.5 w-28 text-center">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {TEMARIO_60
+                            .filter(t => filtroBloqueTemario === "todos" || t.bloque === filtroBloqueTemario)
+                            .map(t => (
+                              <tr key={t.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition">
+                                <td className="p-2.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                                  {t.id}
+                                </td>
+                                <td className="p-2.5 font-mono text-[11px]">
+                                  <span className={`px-2 py-0.5 rounded ${t.bloque === 'Común' ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'}`}>
+                                    {t.bloque}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 font-medium text-slate-800 dark:text-slate-200">
+                                  {t.titulo}
+                                </td>
+                                <td className="p-2.5 text-center font-mono text-slate-500">
+                                  {t.preguntas}
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <button onClick={() => iniciarExamen()} className="px-2.5 py-1 bg-[#0F6252] hover:bg-[#0c4d40] text-white rounded font-bold text-[11px] transition">
+                                    Test →
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: LEYES Y NORMAS (LE)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "leyes" && (
+                  <div className="space-y-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Leyes y Normativa Canónica</h2>
+                      <p className="text-xs text-slate-500">Genera test basados en la literalidad de artículos, plazos y órganos competentes.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {[
+                        { codigo: "Ley 39/2015", alias: "LPACAP", nombre: "Procedimiento Administrativo Común de las Administraciones Públicas", arts: 133 },
+                        { codigo: "RDL 5/2015", alias: "TREBEP", nombre: "Texto Refundido de la Ley del Estatuto Básico del Empleado Público", arts: 100 },
+                        { codigo: "Ley 7/1985", alias: "LBRL", nombre: "Reguladora de las Bases del Régimen Local", arts: 141 },
+                        { codigo: "Constitución 1978", alias: "CE", nombre: "Constitución Española", arts: 169 },
+                        { codigo: "Ley 7/2011", alias: "SAA", nombre: "Documentos, Archivos y Patrimonio Documental de Andalucía", arts: 78 },
+                        { codigo: "Ley 16/1985", alias: "PHE", nombre: "Patrimonio Histórico Español", arts: 79 }
+                      ].map(ley => (
+                        <div key={ley.codigo} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-mono font-bold text-xs text-[#0F6252] dark:text-emerald-400">{ley.codigo}</span>
+                              <span className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-600 dark:text-slate-400">{ley.alias}</span>
+                            </div>
+                            <h4 className="font-bold text-xs text-slate-900 dark:text-white mb-1">{ley.nombre}</h4>
+                            <p className="text-[11px] text-slate-500 font-mono">{ley.arts} artículos indexados</p>
+                          </div>
+                          <button onClick={() => iniciarExamen()} className="mt-3 w-full py-1.5 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-semibold rounded-lg transition">
+                            Hacer test de esta ley →
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: OTROS EXÁMENES (OT)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "otros" && (
+                  <div className="space-y-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Otros exámenes y academias</h2>
+                      <p className="text-xs text-slate-500">Test aportados de academias, editoriales y supuestos prácticos.</p>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-center py-8">
+                      <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center mx-auto mb-2 font-mono font-bold">OT</div>
+                      <h3 className="font-bold text-sm text-slate-900 dark:text-white">Bandeja de otros materiales</h3>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">Puedes cargar exámenes de editoriales independientes desde el módulo de materiales.</p>
+                      <button onClick={() => setModuloActivo("materiales")} className="px-3 py-1.5 bg-[#7B1FA2] text-white text-xs font-bold rounded-lg">
+                        Subir examen de academia →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: REPASAR ERRORES (RE)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "errores" && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Cuaderno de errores prioritario</h2>
+                        <p className="text-xs text-slate-500">Preguntas falladas en simulacros. Requieren 3 aciertos seguidos para desaparecer.</p>
+                      </div>
+                      <button onClick={() => iniciarExamen()} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg transition">
+                        Lanzar test de remediación →
+                      </button>
+                    </div>
+
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
+                      {[
+                        { id: "e-1", enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto es expreso?", racha: "1/3 aciertos", fallos: 2, origen: "Dip. Sevilla 2023" },
+                        { id: "e-2", enunciado: "Las faltas muy graves prescriben según el TREBEP a los:", racha: "0/3 aciertos", fallos: 3, origen: "Tema 12 - Art. 97" },
+                      ].map(err => (
+                        <div key={err.id} className="p-3.5 flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <span className="font-mono text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">{err.origen}</span>
+                            <h4 className="text-xs font-medium text-slate-800 dark:text-slate-200">{err.enunciado}</h4>
+                            <div className="text-[11px] font-mono flex gap-3 text-slate-500">
+                              <span className="text-rose-500 font-bold">{err.fallos} fallos acumulados</span>
+                              <span>•</span>
+                              <span className="text-amber-500 font-bold">Racha: {err.racha}</span>
+                            </div>
+                          </div>
+                          <button onClick={() => iniciarExamen()} className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded transition shrink-0">
+                            Practicar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: MIS RESULTADOS (MR)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "resultados" && (
+                  <div className="space-y-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Histórico de Resultados y Simulacros</h2>
+                      <p className="text-xs text-slate-500">Métricas reales aplicando penalización (-0,33 pts por fallo).</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl text-center">
+                        <div className="text-lg font-black text-[#0F6252] dark:text-emerald-400 font-mono">7,82</div>
+                        <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">Nota media neta</div>
+                      </div>
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl text-center">
+                        <div className="text-lg font-black text-blue-600 font-mono">14</div>
+                        <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">Simulacros hechos</div>
+                      </div>
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl text-center">
+                        <div className="text-lg font-black text-rose-500 font-mono">2</div>
+                        <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">Fallos en cuaderno</div>
+                      </div>
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl text-center">
+                        <div className="text-lg font-black text-slate-700 dark:text-slate-300 font-mono">82%</div>
+                        <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">Tasa de acierto</div>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-mono text-slate-500">
+                            <th className="p-2.5">Simulacro</th>
+                            <th className="p-2.5 text-center">Aciertos</th>
+                            <th className="p-2.5 text-center">Fallos</th>
+                            <th className="p-2.5 text-center">En blanco</th>
+                            <th className="p-2.5 text-center">Nota Neta</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
+                          <tr>
+                            <td className="p-2.5 font-sans font-medium text-slate-800 dark:text-slate-200">Dip. Sevilla 2023 — Intento 1</td>
+                            <td className="p-2.5 text-center text-emerald-600 font-bold">84</td>
+                            <td className="p-2.5 text-center text-rose-500 font-bold">12</td>
+                            <td className="p-2.5 text-center text-slate-400">4</td>
+                            <td className="p-2.5 text-center text-[#0F6252] dark:text-emerald-400 font-bold text-sm">8,00</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2.5 font-sans font-medium text-slate-800 dark:text-slate-200">Test Bloque Común — 12 Temas</td>
+                            <td className="p-2.5 text-center text-emerald-600 font-bold">42</td>
+                            <td className="p-2.5 text-center text-rose-500 font-bold">6</td>
+                            <td className="p-2.5 text-center text-slate-400">2</td>
+                            <td className="p-2.5 text-center text-[#0F6252] dark:text-emerald-400 font-bold text-sm">7,64</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: MATERIALES / INGESTA PDF (MA)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "materiales" && (
+                  <div className="space-y-4">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Ingesta Documental y Extracción OCR</h2>
+                      <p className="text-xs text-slate-500">Sube PDFs de exámenes con sus plantillas para auditarlos antes de guardarlos.</p>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-6 text-center">
+                          <span className="text-2xl block mb-1">📄</span>
+                          <span className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-1">PDF del Examen</span>
+                          <span className="text-[11px] text-slate-400 block mb-3">Examen oficial escaneado o limpio</span>
+                          <input type="file" accept=".pdf" className="text-xs text-slate-500 file:py-1 file:px-2.5 file:rounded file:border-0 file:bg-[#0F6252] file:text-white file:text-xs file:font-bold" />
+                        </div>
+
+                        <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-6 text-center">
+                          <span className="text-2xl block mb-1">📑</span>
+                          <span className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-1">PDF de la Plantilla Correctora</span>
+                          <span className="text-[11px] text-slate-400 block mb-3">Opcional si viene al final del examen</span>
+                          <input type="file" accept=".pdf" className="text-xs text-slate-500 file:py-1 file:px-2.5 file:rounded file:border-0 file:bg-slate-800 file:text-white file:text-xs file:font-bold" />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-2">
+                        <button onClick={() => alert("Procesamiento OCR iniciado en el worker.")} className="px-4 py-2 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-lg transition">
+                          Iniciar Extracción de Preguntas y Evidencias →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: GESTIÓN AVANZADA (GA)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "gestion" && (
+                  <div className="space-y-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Gestión Avanzada del Banco</h2>
+                      <p className="text-xs text-slate-500">Mantenimiento de preguntas, borrado masivo y copias de seguridad.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">Depuración de Banco</h4>
+                        <p className="text-[11px] text-slate-500">Permite eliminar preguntas anuladas o exámenes completos que ya no te interesen.</p>
+                        <button onClick={() => alert("Banco optimizado sin preguntas duplicadas.")} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg">
+                          Depurar preguntas huérfanas
+                        </button>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">Copia de Seguridad</h4>
+                        <p className="text-[11px] text-slate-500">Descarga todo tu histórico de intentos y preguntas en formato JSON.</p>
+                        <button onClick={() => alert("Descarga generada.")} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg">
+                          Exportar base de datos
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------------
+                    PANTALLA: AYUDA Y MANUAL (AY)
+                -------------------------------------------------------------- */}
+                {moduloActivo === "ayuda" && (
+                  <div className="space-y-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">Manual y Atajos de Teclado</h2>
+                      <p className="text-xs text-slate-500">Instrucciones para responder a alta velocidad y criterios de puntuación.</p>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-3">
+                      <h4 className="font-bold text-xs text-[#0F6252] dark:text-emerald-400 font-mono">ATAJOS DE TECLADO EN ESCRITORIO</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-xs">
+                        <div className="p-2 border border-slate-100 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-950">
+                          <span className="font-bold text-slate-900 dark:text-white">[A], [B], [C], [D]</span>: Marcar opción
+                        </div>
+                        <div className="p-2 border border-slate-100 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-950">
+                          <span className="font-bold text-slate-900 dark:text-white">[D]</span>: Marcar o desmarcar duda
+                        </div>
+                        <div className="p-2 border border-slate-100 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-950">
+                          <span className="font-bold text-slate-900 dark:text-white">[E]</span>: Abrir recorte de evidencia
+                        </div>
+                        <div className="p-2 border border-slate-100 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-950">
+                          <span className="font-bold text-slate-900 dark:text-white">[←] / [→]</span>: Cambiar de pregunta
+                        </div>
+                      </div>
+
+                      <h4 className="font-bold text-xs text-[#0F6252] dark:text-emerald-400 font-mono pt-2">FÓRMULA DE PUNTUACIÓN DE TRIBUNAL</h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-mono">
+                        Puntuación Neta = Aciertos - (Fallos × 0,333) | Las preguntas en blanco no penalizan.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </main>
+
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
