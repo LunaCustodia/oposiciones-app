@@ -38,7 +38,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- PDF.js para procesado directo del PDF en el navegador -->
+  <!-- PDF.js para lectura directa del examen en el navegador -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     if (window.pdfjsLib) {
@@ -205,7 +205,6 @@
       }
     };
 
-    // Adaptador de formato de preguntas
     const normalizarPregunta = (p, idx) => ({
       id: p.id,
       numero_orden: idx + 1,
@@ -226,7 +225,6 @@
     // TEMARIO OFICIAL (60 TEMAS)
     // =========================================================================
     const TEMARIO_OFICIAL_60 = [
-      // 12 COMUNES
       { id: 1, codigo: "COM-01", bloque: "Común", numero: 1, titulo: "La Constitución de 1978: Principios Generales. Estructura. Los derechos y deberes fundamentales." },
       { id: 2, codigo: "COM-02", bloque: "Común", numero: 2, titulo: "La organización territorial del Estado español: Principios constitucionales. El Estatuto de Autonomía para Andalucía: derechos y deberes. Competencias." },
       { id: 3, codigo: "COM-03", bloque: "Común", numero: 3, titulo: "El régimen local español. La Administración Local en la Constitución de 1978. El principio de Autonomía: su significado y alcance. La Carta Europea de la Autonomía Local." },
@@ -239,8 +237,6 @@
       { id: 10, codigo: "COM-10", bloque: "Común", numero: 10, titulo: "La Hacienda Pública en la Constitución española de 1978. La Administración Tributaria. La Ley General presupuestaria: estructura y principios generales." },
       { id: 11, codigo: "COM-11", bloque: "Común", numero: 11, titulo: "Ley 19/2013, de 9 de diciembre, de Transparencia, Acceso a la Información Pública y Buen Gobierno y Ley 1/2014, de 24 de junio, de Transparencia Pública de Andalucía. Especial referencia al ámbito local." },
       { id: 12, codigo: "COM-12", bloque: "Común", numero: 12, titulo: "Nociones generales de la normativa estatal y autonómica en materia de Igualdad y violencia de Género. Medidas en el ámbito administrativo y laboral para promover la igualdad real y efectiva de las personas TRANS y LGTBI establecidas en la Ley 4/2023, de 28 de febrero." },
-
-      // 48 ESPECÍFICOS
       { id: 13, codigo: "ESP-01", bloque: "Específico", numero: 1, titulo: "El documento. Concepto de documento. Clases de documentos. El documento de archivo." },
       { id: 14, codigo: "ESP-02", bloque: "Específico", numero: 2, titulo: "El expediente administrativo." },
       { id: 15, codigo: "ESP-03", bloque: "Específico", numero: 3, titulo: "El documento electrónico. Normativa, características específicas y requisitos en las administraciones públicas." },
@@ -291,60 +287,68 @@
       { id: 60, codigo: "ESP-48", bloque: "Específico", numero: 48, titulo: "Sistemas integrados de gestión bibliotecaria." }
     ];
 
-    // Parser directo de texto para extraer preguntas tipo test
-    function parsearTextoExamen(texto) {
-      if (!texto || texto.trim().length === 0) return [];
+    // =========================================================================
+    // PARSEADOR ROBUSTO Y FLEXIBLE PARA EXÁMENES OFICIALES
+    // =========================================================================
+    function parsearTextoExamen(textoBruto) {
+      if (!textoBruto || textoBruto.trim().length === 0) return [];
 
-      const lineas = texto.split('\n');
-      const preguntas = [];
-      let pregActual = null;
+      let t = textoBruto.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-      // Expresión para detectar el número de pregunta (ej: "1.-", "1.", "1)")
-      const regexNumero = /^\s*(\d{1,3})\s*[\.\-\)]\s*(.*)$/;
-      // Expresión para opciones A), B), C), D)
-      const regexOpcion = /^\s*\(?([a-dA-D])\)[\.\-\s]\s*(.*)$/;
+      t = t.replace(/P[aá]gina\s+\d+\s+de\s+\d+/gi, ' ');
+      t = t.replace(/DIPUTACI[OÓ]N\s+PROVINCIAL[^\n]*/gi, ' ');
+      t = t.replace(/TRIBUNAL\s+CALIFICADOR[^\n]*/gi, ' ');
 
-      for (let i = 0; i < lineas.length; i++) {
-        const linea = lineas[i].trim();
-        if (!linea) continue;
+      t = t.replace(/(?:^|\n|\s+)(?:PREGUNTA\s+)?(\d{1,3})\s*[\.\-\)]\s*(?=[A-ZÁÉÍÓÚ¿"¡])/gi, '\n###PREG###$1### ');
 
-        const matchNum = linea.match(regexNumero);
-        if (matchNum) {
-          if (pregActual && pregActual.enunciado) {
-            preguntas.push(pregActual);
+      t = t.replace(/(?:^|\n|\s+)(?:\(?([a-dA-D])\)|\b([a-dA-D])[\.\-\:])\s+/g, (match, p1, p2) => {
+        const letra = (p1 || p2).toLowerCase();
+        return '\n###OPT###' + letra + '### ';
+      });
+
+      const bloques = t.split('\n###PREG###');
+      const resultado = [];
+
+      for (let i = 1; i < bloques.length; i++) {
+        const b = bloques[i].trim();
+        const numMatch = b.match(/^(\d{1,3})###\s*([\s\S]*)$/);
+        if (!numMatch) continue;
+
+        const num = parseInt(numMatch[1]);
+        const resto = numMatch[2];
+
+        const partesOpt = resto.split('\n###OPT###');
+        const enunciado = partesOpt[0].replace(/\s+/g, ' ').trim();
+
+        const opciones = { a: '', b: '', c: '', d: '' };
+        for (let j = 1; j < partesOpt.length; j++) {
+          const optBloque = partesOpt[j].trim();
+          const optMatch = optBloque.match(/^([a-d])###\s*([\s\S]*)$/i);
+          if (optMatch) {
+            const letra = optMatch[1].toLowerCase();
+            const textoOpt = optMatch[2].replace(/\s+/g, ' ').trim();
+            if (opciones[letra] !== undefined) {
+              opciones[letra] = textoOpt;
+            }
           }
-          pregActual = {
-            numero: parseInt(matchNum[1]),
-            enunciado: matchNum[2],
-            opcion_a: '',
-            opcion_b: '',
-            opcion_c: '',
-            opcion_d: '',
+        }
+
+        if (enunciado && (opciones.a || opciones.b)) {
+          resultado.push({
+            numero: num,
+            enunciado: enunciado,
+            opcion_a: opciones.a || 'Opción A',
+            opcion_b: opciones.b || 'Opción B',
+            opcion_c: opciones.c || 'Opción C',
+            opcion_d: opciones.d || 'Opción D',
             respuesta_correcta: 'a',
-            tema_codigo: 'ESP-01',
+            tema_codigo: num <= 12 ? `COM-${String(num).padStart(2,'0')}` : `ESP-${String(Math.min(48, num - 12)).padStart(2,'0')}`,
             justificacion: ''
-          };
-          continue;
-        }
-
-        const matchOpt = linea.match(regexOpcion);
-        if (matchOpt && pregActual) {
-          const letra = matchOpt[1].toLowerCase();
-          pregActual[`opcion_${letra}`] = matchOpt[2];
-          continue;
-        }
-
-        // Si no es nueva pregunta ni opción, acumula texto al enunciado
-        if (pregActual && !pregActual.opcion_a) {
-          pregActual.enunciado += ' ' + linea;
+          });
         }
       }
 
-      if (pregActual && pregActual.enunciado) {
-        preguntas.push(pregActual);
-      }
-
-      return preguntas;
+      return resultado;
     }
 
     function App() {
@@ -384,9 +388,7 @@
       const [historialSimulacros, setHistorialSimulacros] = useState([]);
       const [fallosPendientes, setFallosPendientes] = useState([]);
 
-      // =======================================================================
-      // ESTADOS DEL MÓDULO INCORPORAR EXAMEN (IN)
-      // =======================================================================
+      // Módulo Incorporar Examen (IN)
       const [archivoPdf, setArchivoPdf] = useState(null);
       const [procesandoPdf, setProcesandoPdf] = useState(false);
       const [textoManual, setTextoManual] = useState("");
@@ -435,7 +437,6 @@
         }
       }, [autenticado, recargarExamenes, recargarHistorialYFallos]);
 
-      // Sincronización Storage Temario
       const sincronizarArchivos = useCallback(async () => {
         if (!supabaseClient) return;
         setCargandoArchivos(true);
@@ -587,17 +588,14 @@
         setExamenActivo(false);
       };
 
-      // =======================================================================
-      // PROCESADO REAL DE EXAMEN PDF (MÓDULO IN)
-      // =======================================================================
       const procesarPdfDirecto = async () => {
         if (!archivoPdf) {
-          alert("Por favor selecciona primero un archivo PDF.");
+          alert("Por favor selecciona primero el archivo PDF.");
           return;
         }
 
         if (!window.pdfjsLib) {
-          alert("Error cargando el lector de PDF del navegador. Comprueba tu conexión.");
+          alert("Error cargando el lector PDF del navegador.");
           return;
         }
 
@@ -614,23 +612,27 @@
               for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const textContent = await page.getTextContent();
-                const textoPagina = textContent.items.map(item => item.str).join(' ');
-                textoCompleto += '\n' + textoPagina;
+                
+                let pageText = '';
+                let lastY = null;
+                for (const item of textContent.items) {
+                  if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+                    pageText += '\n';
+                  } else if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
+                    pageText += ' ';
+                  }
+                  pageText += item.str;
+                  lastY = item.transform[5];
+                }
+
+                textoCompleto += '\n\n' + pageText;
               }
 
-              if (textoCompleto.trim().length < 50) {
-                alert("El archivo PDF parece ser una imagen escaneada sin texto seleccionable. Puedes copiar el texto y pegarlo en el recuadro inferior.");
-                setTextoManual("");
-              } else {
-                setTextoManual(textoCompleto);
-                const extraidas = parsearTextoExamen(textoCompleto);
-                setPreguntasExtraidas(extraidas);
-                if (extraidas.length === 0) {
-                  alert("Se extrajo el texto pero no se reconoció el formato estándar (1.- Enunciado, a)...). Revisa el texto en el recuadro inferior.");
-                }
-              }
+              setTextoManual(textoCompleto);
+              const extraidas = parsearTextoExamen(textoCompleto);
+              setPreguntasExtraidas(extraidas);
             } catch (errInterno) {
-              alert("Error leyendo las páginas del PDF: " + errInterno.message);
+              alert("Error leyendo el contenido del PDF: " + errInterno.message);
             } finally {
               setProcesandoPdf(false);
             }
@@ -669,8 +671,6 @@
           ...p,
           respuesta_correcta: mapa[p.numero] || p.respuesta_correcta
         })));
-
-        alert(`Se han asignado las respuestas correctas a ${Object.keys(mapa).length} preguntas.`);
       };
 
       const guardarExamenCompletoEnSupabase = async () => {
@@ -681,7 +681,6 @@
 
         setGuardandoEnSupabase(true);
         try {
-          // 1. Crear el examen
           const examenCreado = await ExamenService.crearExamen({
             titulo: datosExamen.titulo,
             organismo: datosExamen.organismo,
@@ -689,7 +688,6 @@
             categoria: datosExamen.categoria
           });
 
-          // 2. Preparar el lote de preguntas
           const preguntasParaInsertar = preguntasExtraidas.map(p => ({
             examen_id: examenCreado.id,
             tema_codigo: p.tema_codigo || 'ESP-01',
@@ -704,12 +702,8 @@
             año: parseInt(datosExamen.año) || 2023
           }));
 
-          // 3. Insertar lote
           await ExamenService.crearLotePreguntas(preguntasParaInsertar);
 
-          alert(`¡Éxito! Examen "${datosExamen.titulo}" guardado con ${preguntasParaInsertar.length} preguntas en Supabase.`);
-          
-          // Limpiar y redirigir a OF
           setPreguntasExtraidas([]);
           setTextoManual("");
           setArchivoPdf(null);
@@ -722,9 +716,6 @@
         }
       };
 
-      // =======================================================================
-      // SALA DE EXAMEN
-      // =======================================================================
       const lanzarExamenBD = async (examen) => {
         try {
           const raw = await ExamenService.obtenerPreguntasPorExamen(examen.id);
@@ -796,9 +787,6 @@
         }
       };
 
-      // =======================================================================
-      // MÉTODOS DE GESTIÓN AVANZADA (GA)
-      // =======================================================================
       const cargarPreguntasDeExamenGA = async (examen) => {
         setExamenSeleccionadoGA(examen);
         try {
@@ -810,7 +798,7 @@
       };
 
       const handleBorrarExamenCompleto = async (examenId, titulo) => {
-        const confirmar = confirm(`¿ELIMINAR EXAMEN COMPLETO?\n\n"${titulo}"\n\nSe eliminará el examen y TODAS las preguntas que contiene.`);
+        const confirmar = confirm(`¿ELIMINAR EXAMEN COMPLETO?\n\n"${titulo}"\n\nSe eliminará el examen y TODAS las preguntas asociadas.`);
         if (!confirmar) return;
 
         try {
@@ -820,7 +808,6 @@
             setPreguntasGA([]);
           }
           await recargarExamenes();
-          alert("Examen eliminado correctamente.");
         } catch (err) {
           alert("Error eliminando examen: " + err.message);
         }
@@ -844,7 +831,6 @@
           setPreguntasGA(prev => prev.map(p => p.id === guardada.id ? guardada : p));
           setPreguntaEnEdicion(null);
           await recargarExamenes();
-          alert("Pregunta guardada.");
         } catch (err) {
           alert("Error guardando la pregunta: " + err.message);
         }
@@ -863,9 +849,6 @@
         }
       };
 
-      // =======================================================================
-      // VISTA DE LOGIN
-      // =======================================================================
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -911,9 +894,6 @@
         );
       }
 
-      // =======================================================================
-      // SALA DE EXAMEN
-      // =======================================================================
       if (examenActivo) {
         const p = preguntasTest[indicePregunta] || preguntasTest[0];
         const resp = respuestas[p?.id];
@@ -1089,9 +1069,6 @@
         );
       }
 
-      // =======================================================================
-      // NAVEGACIÓN Y DASHBOARD PRINCIPAL
-      // =======================================================================
       const navItems = [
         { id: "inicio", sigla: "IN", label: "Inicio" },
         { id: "oficiales", sigla: "OF", label: "Exámenes oficiales" },
@@ -1176,7 +1153,6 @@
             <main className="flex-1 p-6 md:p-8 overflow-y-auto">
               <div className="max-w-6xl mx-auto space-y-5">
                 
-                {/* 1. INICIO */}
                 {moduloActivo === "inicio" && (
                   <>
                     <div>
@@ -1262,7 +1238,6 @@
                   </>
                 )}
 
-                {/* 2. EXÁMENES OFICIALES (OF) */}
                 {moduloActivo === "oficiales" && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1322,7 +1297,6 @@
                   </div>
                 )}
 
-                {/* 3. MATERIALES & MI TEMARIO (60 TEMAS) */}
                 {(moduloActivo === "materiales" || moduloActivo === "temario") && (
                   <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1421,7 +1395,6 @@
                   </div>
                 )}
 
-                {/* 4. INCORPORAR UN EXAMEN (IN) - LIMPIO Y 100% OPERATIVO */}
                 {moduloActivo === "ingesta" && (
                   <div className="space-y-6">
                     <div>
@@ -1433,7 +1406,6 @@
                       </p>
                     </div>
 
-                    {/* Paso 1: Datos identificativos */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
                         1. Datos de la convocatoria
@@ -1481,7 +1453,6 @@
                       </div>
                     </div>
 
-                    {/* Paso 2: Selección y procesamiento del PDF */}
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
                         2. Cuestionario en PDF
@@ -1490,7 +1461,7 @@
                       <div className="p-4 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
                         <div className="space-y-1 text-center md:text-left">
                           <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona el PDF del examen</span>
-                          <span className="text-[11px] text-slate-400 block">El navegador extraerá automáticamente los enunciados y las opciones A, B, C y D.</span>
+                          <span className="text-[11px] text-slate-400 block">El lector extraerá automáticamente las preguntas y opciones del documento.</span>
                           <input 
                             type="file" 
                             accept=".pdf" 
@@ -1508,36 +1479,30 @@
                         </button>
                       </div>
 
-                      {/* Alternativa: Texto manual si el PDF es imagen */}
-                      <div className="pt-2">
-                        <details className="text-xs text-slate-500">
-                          <summary className="cursor-pointer font-bold text-[#0F6252] hover:underline">
-                            ¿El PDF es una imagen escaneada? Pulsa aquí para pegar el texto directamente
-                          </summary>
-                          <div className="mt-3 space-y-2">
-                            <textarea
-                              rows={6}
-                              value={textoManual}
-                              onChange={e => setTextoManual(e.target.value)}
-                              placeholder="Pega aquí el texto del examen (ej: 1.- ¿Qué es el principio de procedencia? a) ... b) ... c) ... d) ...)"
-                              className="w-full p-3 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
-                            />
+                      {textoManual && (
+                        <div className="pt-2 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Texto extraído del documento:</span>
                             <button
                               onClick={() => {
                                 const parseadas = parsearTextoExamen(textoManual);
                                 setPreguntasExtraidas(parseadas);
-                                alert(`Se han detectado ${parseadas.length} preguntas en el texto pegado.`);
                               }}
-                              className="px-4 py-2 bg-slate-800 text-white rounded-xl font-bold"
+                              className="px-3 py-1 bg-stone-800 text-white rounded-lg text-xs font-bold hover:bg-stone-900"
                             >
-                              Parsear texto pegado
+                              🔄 Re-procesar texto
                             </button>
                           </div>
-                        </details>
-                      </div>
+                          <textarea
+                            rows={8}
+                            value={textoManual}
+                            onChange={e => setTextoManual(e.target.value)}
+                            className="w-full p-3 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
+                          />
+                        </div>
+                      )}
                     </div>
 
-                    {/* Paso 3: Plantilla de respuestas y vista previa */}
                     {preguntasExtraidas.length > 0 && (
                       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-3">
@@ -1559,13 +1524,12 @@
                           </button>
                         </div>
 
-                        {/* Plantilla de respuestas */}
                         <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
                           <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
                             Plantilla de soluciones oficiales (opcional)
                           </label>
                           <p className="text-[11px] text-slate-500">
-                            Pega aquí las soluciones para marcarlas de golpe. Admite formatos como: <code>1-B, 2-C, 3-A</code> o <code>1:B 2:C</code>.
+                            Pega aquí las soluciones oficiales para marcarlas de golpe. Admite: <code>1-B, 2-C, 3-A</code> o <code>1:B 2:C</code>.
                           </p>
                           <div className="flex gap-2">
                             <input
@@ -1584,7 +1548,6 @@
                           </div>
                         </div>
 
-                        {/* Listado de preguntas para revisión rápida */}
                         <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
                           {preguntasExtraidas.map((p, idx) => (
                             <div key={idx} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs space-y-2 bg-white dark:bg-slate-900">
@@ -1636,7 +1599,6 @@
                   </div>
                 )}
 
-                {/* 5. GESTIÓN AVANZADA (GA) */}
                 {moduloActivo === "gestion" && (
                   <div className="space-y-6">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -1896,6 +1858,7 @@
                               type="text"
                               value={nuevoExamenForm.organismo}
                               onChange={e => setNuevoExamenForm({...nuevoExamenForm, organismo: e.target.value})}
+                              placeholder="Ej: Diputación Provincial de Sevilla"
                               className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl"
                               required
                             />
@@ -1947,7 +1910,6 @@
                   </div>
                 )}
 
-                {/* 6. LEYES Y NORMAS (LE) */}
                 {moduloActivo === "leyes" && (
                   <div className="space-y-4">
                     <div>
@@ -1992,7 +1954,6 @@
                   </div>
                 )}
 
-                {/* 7. OTROS EXÁMENES (OT) */}
                 {moduloActivo === "otros" && (
                   <div className="space-y-4">
                     <div>
@@ -2010,7 +1971,6 @@
                   </div>
                 )}
 
-                {/* 8. CUADERNO DE ERRORES (RE) */}
                 {moduloActivo === "errores" && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
@@ -2063,7 +2023,6 @@
                   </div>
                 )}
 
-                {/* 9. RESULTADOS (MR) */}
                 {moduloActivo === "resultados" && (
                   <div className="space-y-4">
                     <div>
@@ -2133,7 +2092,6 @@
                   </div>
                 )}
 
-                {/* 10. AYUDA (AY) */}
                 {moduloActivo === "ayuda" && (
                   <div className="space-y-4">
                     <div>
