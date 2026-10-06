@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Oposiciones — Simulador & Test</title>
+  <!-- Tailwind CSS & Tipografía Inter -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eff6ff', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a', 950: '#0a0f1d' }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Supabase JS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- React & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased select-none">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // Preguntas iniciales de demostración hasta conectar Supabase
+    const MOCK_PREGUNTAS = [
+      {
+        id: "p1",
+        numero_orden: 1,
+        enunciado: "¿Cuál es el plazo para interponer recurso potestativo de reposición si el acto administrativo fuera expreso según la Ley 39/2015?",
+        evidencia_texto: "Artículo 124.1 Ley 39/2015: El plazo para la interposición del recurso de reposición será de un mes, si el acto fuera expreso. Transcurrido dicho plazo, únicamente podrá interponerse recurso contencioso-administrativo.",
+        opciones: [
+          { id: "o1", letra: "A", texto: "Un mes a contar desde el día siguiente a la notificación o publicación.", es_correcta: true },
+          { id: "o2", letra: "B", texto: "Dos meses a contar desde el día siguiente a la notificación.", es_correcta: false },
+          { id: "o3", letra: "C", texto: "Tres meses en caso de actos presuntos y expresos.", es_correcta: false },
+          { id: "o4", letra: "D", texto: "Quince días hábiles improrrogables.", es_correcta: false }
+        ]
+      },
+      {
+        id: "p2",
+        numero_orden: 2,
+        enunciado: "Según el artículo 140 de la Constitución Española, los concejales de los Ayuntamientos serán elegidos por:",
+        evidencia_texto: "Artículo 140 CE: Los Concejales serán elegidos por los vecinos del municipio mediante sufragio universal, libre, igual, directo y secreto, en la forma establecida por la ley.",
+        opciones: [
+          { id: "o5", letra: "A", texto: "El Alcalde en la sesión plenaria de constitución de la corporación.", es_correcta: false },
+          { id: "o6", letra: "B", texto: "Los vecinos del municipio mediante sufragio universal, libre, igual, directo y secreto.", es_correcta: true },
+          { id: "o7", letra: "C", texto: "El Presidente de la Diputación Provincial correspondiente.", es_correcta: false },
+          { id: "o8", letra: "D", texto: "Los representantes de los partidos políticos con mayor implantación local.", es_correcta: false }
+        ]
+      },
+      {
+        id: "p3",
+        numero_orden: 3,
+        enunciado: "En relación con los documentos de archivo, el principio de procedencia establece que:",
+        evidencia_texto: "Manual de Archivística: El principio de procedencia o respeto al origen exige que los documentos producidos por una institución no se mezclen con los de otra.",
+        opciones: [
+          { id: "o9", letra: "A", texto: "Los documentos deben ordenarse cronológicamente sin importar la oficina que los generó.", es_correcta: false },
+          { id: "o10", letra: "B", texto: "Los documentos de cada fondo deben mantenerse agrupados sin mezclarse con fondos de otras entidades.", es_correcta: true },
+          { id: "o11", letra: "C", texto: "Los expedientes deben destruirse transcurridos 5 años de su archivo general.", es_correcta: false },
+          { id: "o12", letra: "D", texto: "El acceso a los documentos históricos requiere autorización previa del Consejo de Gobierno.", es_correcta: false }
+        ]
+      }
+    ];
+
+    function App() {
+      // Estado de Supabase
+      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("sp_url") || "");
+      const [supabaseAnonKey, setSupabaseAnonKey] = useState(() => localStorage.getItem("sp_key") || "");
+      const [mostrarConfig, setMostrarConfig] = useState(false);
+
+      // Estado del Examen
+      const [preguntas, setPreguntas] = useState(MOCK_PREGUNTAS);
+      const [indice, setIndice] = useState(0);
+      const [respuestas, setRespuestas] = useState({});
+      const [segundos, setSegundos] = useState(3600); // 60 min
+      const [mostrarEvidencia, setMostrarEvidencia] = useState(false);
+      const [mostrarHojaMovil, setMostrarHojaMovil] = useState(false);
+      const [examenEntregado, setExamenEntregado] = useState(false);
+
+      // Guardar credenciales de Supabase
+      const guardarCredenciales = (url, key) => {
+        setSupabaseUrl(url);
+        setSupabaseAnonKey(key);
+        localStorage.setItem("sp_url", url);
+        localStorage.setItem("sp_key", key);
+        setMostrarConfig(false);
+      };
+
+      // Cargar preguntas de Supabase si existen credenciales
+      useEffect(() => {
+        if (!supabaseUrl || !supabaseAnonKey) return;
+        try {
+          const client = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+          client.from('preguntas')
+            .select('id, numero_orden, enunciado, evidencia_tipo, evidencia_url, evidencia_texto, opciones_respuesta(id, letra, texto, es_correcta)')
+            .order('numero_orden', { ascending: true })
+            .limit(100)
+            .then(({ data, error }) => {
+              if (data && data.length > 0) {
+                const formateadas = data.map(p => ({
+                  id: p.id,
+                  numero_orden: p.numero_orden,
+                  enunciado: p.enunciado,
+                  evidencia_url: p.evidencia_url,
+                  evidencia_texto: p.evidencia_texto,
+                  opciones: (p.opciones_respuesta || []).sort((a,b) => a.letra.localeCompare(b.letra))
+                }));
+                setPreguntas(formateadas);
+              }
+            });
+        } catch (e) {
+          console.error("Error al conectar con Supabase:", e);
+        }
+      }, [supabaseUrl, supabaseAnonKey]);
+
+      // Temporizador
+      useEffect(() => {
+        if (examenEntregado) return;
+        const timer = setInterval(() => setSegundos(s => s > 0 ? s - 1 : 0), 1000);
+        return () => clearInterval(timer);
+      }, [examenEntregado]);
+
+      const preguntaActual = preguntas[indice] || preguntas[0];
+      const estadoResp = respuestas[preguntaActual?.id];
+
+      // Responder opción
+      const responder = useCallback((opcionId, letra) => {
+        if (examenEntregado) return;
+        setRespuestas(prev => {
+          const actual = prev[preguntaActual.id];
+          const esMisma = actual?.opcion_id === opcionId;
+          return {
+            ...prev,
+            [preguntaActual.id]: {
+              opcion_id: esMisma ? null : opcionId,
+              letra: esMisma ? null : letra,
+              dudosa: actual?.dudosa || false
+            }
+          };
+        });
+      }, [preguntaActual?.id, examenEntregado]);
+
+      // Alternar duda
+      const alternarDuda = useCallback(() => {
+        setRespuestas(prev => {
+          const actual = prev[preguntaActual.id] || { opcion_id: null, letra: null, dudosa: false };
+          return {
+            ...prev,
+            [preguntaActual.id]: { ...actual, dudosa: !actual.dudosa }
+          };
+        });
+      }, [preguntaActual?.id]);
+
+      // Atajos de teclado en PC
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+          const k = e.key.toUpperCase();
+          if (['A', '1'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'A'); if (op) responder(op.id, 'A'); }
+          else if (['B', '2'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'B'); if (op) responder(op.id, 'B'); }
+          else if (['C', '3'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'C'); if (op) responder(op.id, 'C'); }
+          else if (['D', '4'].includes(k)) { const op = preguntaActual.opciones.find(o => o.letra === 'D'); if (op) responder(op.id, 'D'); }
+          else if (k === 'D') alternarDuda();
+          else if (k === 'E') setMostrarEvidencia(v => !v);
+          else if (k === 'ARROWRIGHT' || k === ' ') { e.preventDefault(); if (indice < preguntas.length - 1) setIndice(i => i + 1); }
+          else if (k === 'ARROWLEFT') { e.preventDefault(); if (indice > 0) setIndice(i => i - 1); }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, [preguntaActual, indice, preguntas.length, responder, alternarDuda]);
+
+      // Métricas
+      const respondidas = Object.values(respuestas).filter(r => r.opcion_id).length;
+      const dudosas = Object.values(respuestas).filter(r => r.dudosa).length;
+
+      const formatTiempo = (s) => {
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+      };
+
+      // Cálculo de resultado si se entrega
+      const resultados = useMemo(() => {
+        if (!examenEntregado) return null;
+        let aciertos = 0, fallos = 0, blancos = 0;
+        preguntas.forEach(p => {
+          const resp = respuestas[p.id];
+          if (!resp || !resp.opcion_id) { blancos++; }
+          else {
+            const correcta = p.opciones.find(o => o.es_correcta);
+            if (correcta && correcta.id === resp.opcion_id) aciertos++;
+            else fallos++;
+          }
+        });
+        const neta = Math.max(0, aciertos - (fallos * 0.333)).toFixed(2);
+        return { aciertos, fallos, blancos, neta };
+      }, [examenEntregado, preguntas, respuestas]);
+
+      return (
+        <div className="min-h-screen flex flex-col justify-between bg-slate-950 text-slate-100">
+          
+          {/* BARRA SUPERIOR COMPACTA (44px) */}
+          <header className="sticky top-0 z-30 h-11 border-b border-slate-800 bg-slate-950/95 backdrop-blur px-3 flex items-center justify-between text-xs font-mono">
+            <div className="flex items-center gap-3">
+              <span className="font-bold text-slate-200">{respondidas}/{preguntas.length}</span>
+              <span className="text-slate-600">|</span>
+              <span className="text-amber-400 font-semibold">⚑ {dudosas}</span>
+            </div>
+
+            <div className="font-bold tracking-wider text-sm text-slate-100">
+              {formatTiempo(segundos)}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setMostrarConfig(true)}
+                className="p-1 text-slate-400 hover:text-white"
+                title="Conexión Supabase"
+              >
+                ⚙️
+              </button>
+              <button 
+                onClick={() => setMostrarEvidencia(v => !v)}
+                className="hidden sm:inline-block px-2 py-0.5 rounded border border-slate-800 bg-slate-900 text-[11px] text-slate-300 hover:bg-slate-800"
+              >
+                Evidencia [E]
+              </button>
+              {!examenEntregado ? (
+                <button 
+                  onClick={() => confirm("¿Deseas finalizar y corregir el simulacro?") && setExamenEntregado(true)}
+                  className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 font-bold text-white text-[11px]"
+                >
+                  Finalizar
+                </button>
+              ) : (
+                <span className="px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded font-bold text-[10px]">
+                  CORREGIDO
+                </span>
+              )}
+            </div>
+          </header>
+
+          {/* CUERPO CENTRAL */}
+          <div className="flex-1 flex overflow-hidden">
+            
+            {/* Pregunta Activa */}
+            <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col justify-between max-w-3xl mx-auto w-full">
+              <div className="space-y-4">
+                
+                {/* Meta de pregunta */}
+                <div className="flex items-center justify-between text-xs font-mono text-slate-400">
+                  <span>PREGUNTA {preguntaActual.numero_orden} DE {preguntas.length}</span>
+                  <button
+                    onClick={alternarDuda}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      estadoResp?.dudosa 
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500 font-bold'
+                        : 'border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {estadoResp?.dudosa ? '⚑ Marcada dudosa [D]' : 'Marcar dudosa [D]'}
+                  </button>
+                </div>
+
+                {/* Enunciado */}
+                <h2 className="text-sm md:text-base font-medium text-slate-100 leading-relaxed">
+                  {preguntaActual.enunciado}
+                </h2>
+
+                {/* Opciones */}
+                <div className="space-y-2 pt-2">
+                  {preguntaActual.opciones.map(op => {
+                    const seleccionada = estadoResp?.opcion_id === op.id;
+                    let estilo = 'border-slate-800/80 bg-slate-900/30 text-slate-300 hover:bg-slate-800/60';
+                    
+                    if (examenEntregado) {
+                      if (op.es_correcta) estilo = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 font-bold';
+                      else if (seleccionada && !op.es_correcta) estilo = 'border-rose-500 bg-rose-950/40 text-rose-200 line-through';
+                    } else if (seleccionada) {
+                      estilo = 'border-blue-500 bg-blue-950/50 text-blue-100 font-medium';
+                    }
+
+                    return (
+                      <button
+                        key={op.id}
+                        onClick={() => responder(op.id, op.letra)}
+                        className={`w-full text-left p-3 rounded border text-xs md:text-sm flex items-start gap-3 transition active:scale-[0.99] ${estilo}`}
+                      >
+                        <span className={`font-mono font-bold px-1.5 py-0.5 rounded text-xs shrink-0 ${
+                          seleccionada ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {op.letra}
+                        </span>
+                        <span className="leading-snug">{op.texto}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Resumen al entregar */}
+                {resultados && (
+                  <div className="mt-4 p-3 bg-slate-900 border border-slate-800 rounded font-mono text-xs flex justify-around text-center">
+                    <div><span className="text-emerald-400 block font-bold text-sm">{resultados.aciertos}</span>Aciertos</div>
+                    <div><span className="text-rose-400 block font-bold text-sm">{resultados.fallos}</span>Fallos</div>
+                    <div><span className="text-slate-400 block font-bold text-sm">{resultados.blancos}</span>En blanco</div>
+                    <div><span className="text-blue-400 block font-bold text-sm">{resultados.neta}</span>Nota Neta (-0.33)</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Controles de Navegación */}
+              <div className="pt-6 border-t border-slate-800/60 flex items-center justify-between">
+                <button
+                  disabled={indice === 0}
+                  onClick={() => setIndice(i => i - 1)}
+                  className="px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-30"
+                >
+                  ← Anterior
+                </button>
+
+                <button
+                  onClick={() => setMostrarHojaMovil(true)}
+                  className="md:hidden px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 text-slate-200"
+                >
+                  Hoja ({indice + 1})
+                </button>
+
+                <button
+                  disabled={indice === preguntas.length - 1}
+                  onClick={() => setIndice(i => i + 1)}
+                  className="px-3 py-1.5 text-xs font-mono rounded border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-30"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </main>
+
+            {/* Matriz 100 Celdas lateral (Desktop / iPad horizontal) */}
+            <aside className="hidden md:block w-60 border-l border-slate-800 bg-slate-950 p-3 overflow-y-auto">
+              <div className="text-[11px] font-mono font-bold text-slate-400 mb-2">HOJA DE RESPUESTAS</div>
+              <div className="grid grid-cols-5 gap-1">
+                {preguntas.map((p, idx) => {
+                  const r = respuestas[p.id];
+                  const respondida = Boolean(r?.opcion_id);
+                  const dudosa = Boolean(r?.dudosa);
+                  const esActual = idx === indice;
+
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setIndice(idx)}
+                      className={`h-7 rounded border font-mono text-[11px] flex items-center justify-center relative transition ${
+                        respondida 
+                          ? 'bg-blue-600 border-blue-500 text-white font-bold' 
+                          : dudosa 
+                          ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold' 
+                          : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700'
+                      } ${esActual ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-950' : ''}`}
+                    >
+                      {p.numero_orden}
+                      {dudosa && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          </div>
+
+          {/* MODAL EVIDENCIA */}
+          {mostrarEvidencia && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3">
+              <div className="bg-slate-950 border border-slate-800 w-full max-w-lg rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="font-mono text-xs font-bold text-slate-300">
+                    EVIDENCIA / FUENTE — P.{preguntaActual.numero_orden}
+                  </span>
+                  <button onClick={() => setMostrarEvidencia(false)} className="text-slate-400 hover:text-white font-mono">✕</button>
+                </div>
+                {preguntaActual.evidencia_texto && (
+                  <div className="p-3 bg-slate-900 border border-slate-800 rounded font-serif text-xs leading-relaxed text-slate-200">
+                    {preguntaActual.evidencia_texto}
+                  </div>
+                )}
+                {preguntaActual.evidencia_url && (
+                  <img src={preguntaActual.evidencia_url} alt="Recorte Oficial" className="w-full rounded border border-slate-800" />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* BOTTOM SHEET HOJA DE RESPUESTAS (MÓVIL) */}
+          {mostrarHojaMovil && (
+            <div className="fixed inset-0 z-50 bg-black/70 flex flex-col justify-end md:hidden">
+              <div className="bg-slate-950 border-t border-slate-800 p-4 rounded-t-xl max-h-[70vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-3 font-mono text-xs">
+                  <span className="font-bold text-slate-300">HOJA DE RESPUESTAS</span>
+                  <button onClick={() => setMostrarHojaMovil(false)} className="text-slate-400">Cerrar</button>
+                </div>
+                <div className="grid grid-cols-6 gap-1.5">
+                  {preguntas.map((p, idx) => {
+                    const r = respuestas[p.id];
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => { setIndice(idx); setMostrarHojaMovil(false); }}
+                        className={`h-8 rounded border font-mono text-xs flex items-center justify-center ${
+                          r?.opcion_id ? 'bg-blue-600 text-white font-bold' : r?.dudosa ? 'bg-amber-500/20 text-amber-300 border-amber-500' : 'border-slate-800 bg-slate-900 text-slate-400'
+                        }`}
+                      >
+                        {p.numero_orden}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL CONFIGURACIÓN SUPABASE */}
+          {mostrarConfig && (
+            <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3">
+              <div className="bg-slate-950 border border-slate-800 w-full max-w-md rounded-lg p-4 space-y-3 font-sans text-xs">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="font-mono font-bold text-slate-200">CONECTAR SUPABASE</span>
+                  <button onClick={() => setMostrarConfig(false)} className="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-mono">Project URL</label>
+                  <input 
+                    id="inp-url" 
+                    defaultValue={supabaseUrl} 
+                    placeholder="https://xxxx.supabase.co" 
+                    className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-mono">Anon Public Key</label>
+                  <input 
+                    id="inp-key" 
+                    defaultValue={supabaseAnonKey} 
+                    placeholder="eyJhbGciOi..." 
+                    className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-100 font-mono"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const u = document.getElementById("inp-url").value.trim();
+                    const k = document.getElementById("inp-key").value.trim();
+                    guardarCredenciales(u, k);
+                  }}
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold font-mono rounded mt-2"
+                >
+                  Guardar Conexión
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
