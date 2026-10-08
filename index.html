@@ -878,6 +878,11 @@ Estructura por elemento:
         }
       };
 
+      const temasFiltrados = useMemo(() => {
+        if (filtroBloque === "todos") return TEMARIO_OFICIAL_60;
+        return TEMARIO_OFICIAL_60.filter(t => t.bloque === filtroBloque);
+      }, [filtroBloque]);
+
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -1111,11 +1116,6 @@ Estructura por elemento:
         { id: "gestion", sigla: "GA", label: "Gestión avanzada" },
         { id: "ayuda", sigla: "AY", label: "Ayuda y manual" },
       ];
-
-      const temasFiltrados = useMemo(() => {
-        if (filtroBloque === "todos") return TEMARIO_OFICIAL_60;
-        return TEMARIO_OFICIAL_60.filter(t => t.bloque === filtroBloque);
-      }, [filtroBloque]);
 
       return (
         <div className="min-h-screen flex bg-[#F8FAFB] dark:bg-slate-950">
