@@ -308,38 +308,168 @@
     ];
 
     // =========================================================================
-    // FUNCIÓN DE AUTO-REPARACIÓN PARA EVITAR ERRORES DE JSON CORTADO
+    // NORMALIZACIÓN DEL RESULTADO DEL IMPORTADOR
     // =========================================================================
-    function repararJsonArray(rawText) {
+    function repararJsonImportacion(rawText) {
       let s = rawText.trim();
       s = s.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
 
-      // 1. Intento directo
       try {
-        const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        return JSON.parse(s);
       } catch (e) {}
 
-      // 2. Si se cortó por agotar tokens, reparamos cerrando en el último '}'
+      const inicioPreguntas = /"preguntas"\s*:\s*\[/.exec(s);
+      const firstArray = inicioPreguntas ? s.indexOf('[', inicioPreguntas.index) : s.indexOf('[');
       const lastClose = s.lastIndexOf('}');
-      if (lastClose !== -1) {
-        const repaired = s.substring(0, lastClose + 1) + '\n]';
+      if (firstArray !== -1 && lastClose !== -1) {
         try {
-          const parsed = JSON.parse(repaired);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e2) {
-          const prevClose = s.lastIndexOf('}', lastClose - 1);
-          if (prevClose !== -1) {
-            try {
-              const parsed = JSON.parse(s.substring(0, prevClose + 1) + '\n]');
-              if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-            } catch (e3) {}
-          }
-        }
+          const preguntasRecuperadas = JSON.parse(s.substring(firstArray, lastClose + 1) + '\n]');
+          return inicioPreguntas ? { preguntas: preguntasRecuperadas, archivos: [], conflictos: [] } : preguntasRecuperadas;
+        } catch (e2) {}
       }
 
       throw new Error("No se pudo reconstruir el JSON del examen. Intenta de nuevo.");
     }
+
+    const normalizarClaveTexto = (valor) => String(valor || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const normalizarSeccionPregunta = (valor) => normalizarClaveTexto(valor).includes('reserv') ? 'reserva' : 'ordinaria';
+
+    const normalizarProcedencias = (valor) => {
+      const lista = Array.isArray(valor) ? valor : (valor ? [valor] : []);
+      const vistas = new Set();
+      return lista.map(item => {
+        if (typeof item === 'string') return { archivo: item, pagina: null };
+        return {
+          archivo: item?.archivo || item?.nombre_archivo || '',
+          pagina: item?.pagina ?? item?.pagina_inicio ?? null,
+          pagina_fin: item?.pagina_fin ?? null
+        };
+      }).filter(item => {
+        if (!item.archivo && item.pagina == null) return false;
+        const clave = `${item.archivo}|${item.pagina}|${item.pagina_fin}`;
+        if (vistas.has(clave)) return false;
+        vistas.add(clave);
+        return true;
+      });
+    };
+
+    const normalizarOpcionesImportadas = (pregunta) => {
+      let opciones = [];
+      if (Array.isArray(pregunta.opciones)) {
+        opciones = pregunta.opciones.map((opcion, idx) => ({
+          letra: String(opcion?.letra || String.fromCharCode(65 + idx)).trim().toUpperCase(),
+          texto: String(opcion?.texto || opcion?.contenido || '').trim(),
+          tabla: String(opcion?.tabla || opcion?.tabla_markdown || '').trim()
+        }));
+      } else if (pregunta.opciones && typeof pregunta.opciones === 'object') {
+        opciones = Object.entries(pregunta.opciones).map(([letra, texto]) => ({
+          letra: String(letra).trim().toUpperCase(),
+          texto: String(texto || '').trim(),
+          tabla: ''
+        }));
+      } else {
+        'abcdefghijkl'.split('').forEach(letra => {
+          const texto = pregunta[`opcion_${letra}`];
+          if (texto != null && String(texto).trim()) opciones.push({ letra: letra.toUpperCase(), texto: String(texto).trim(), tabla: '' });
+        });
+      }
+      return opciones.filter(opcion => opcion.letra && (opcion.texto || opcion.tabla));
+    };
+
+    const formatearProcedencia = (procedencias) => (procedencias || []).map(item => {
+      const paginas = item.pagina == null ? '' : ` · p. ${item.pagina}${item.pagina_fin && item.pagina_fin !== item.pagina ? `-${item.pagina_fin}` : ''}`;
+      return `${item.archivo || 'Archivo sin identificar'}${paginas}`;
+    }).join(' · ');
+
+    function normalizarResultadoImportacion(resultado, archivosSeleccionados) {
+      const bruto = Array.isArray(resultado) ? { preguntas: resultado } : (resultado || {});
+      const conflictos = Array.isArray(bruto.conflictos) ? [...bruto.conflictos] : [];
+      const porClave = new Map();
+
+      (Array.isArray(bruto.preguntas) ? bruto.preguntas : []).forEach((pregunta, idx) => {
+        const seccion = normalizarSeccionPregunta(pregunta.seccion || (String(pregunta.enunciado || '').includes('[RESERVA]') ? 'reserva' : 'ordinaria'));
+        const numero = pregunta.numero ?? pregunta.numero_pregunta ?? idx + 1;
+        const opciones = normalizarOpcionesImportadas(pregunta);
+        const respuestaRaw = pregunta.respuesta_correcta ?? pregunta.respuesta?.letra ?? null;
+        const respuestaNormalizada = respuestaRaw == null ? null : String(respuestaRaw).trim().toLowerCase();
+        const anulada = Boolean(pregunta.anulada) || respuestaNormalizada === 'anulada';
+        const respuestaCorrecta = !anulada && /^[a-z]$/.test(respuestaNormalizada || '') ? respuestaNormalizada : null;
+        const estadoDeclarado = normalizarClaveTexto(pregunta.estado_respuesta || pregunta.respuesta?.estado);
+        const tieneConflicto = Boolean(pregunta.conflicto) || estadoDeclarado.includes('conflic') || estadoDeclarado.includes('baja confianza') || (respuestaRaw != null && !anulada && !/^[a-z]$/.test(respuestaNormalizada || ''));
+        const procedenciasPregunta = normalizarProcedencias(pregunta.procedencias_pregunta || pregunta.procedencia_pregunta || pregunta.procedencia);
+        const procedenciasRespuesta = normalizarProcedencias(pregunta.procedencias_respuesta || pregunta.procedencia_respuesta || pregunta.respuesta?.procedencia);
+        const normalizada = {
+          numero,
+          seccion,
+          tema_codigo: pregunta.tema_codigo || 'ESP-01',
+          enunciado: String(pregunta.enunciado || '').trim(),
+          apartados: Array.isArray(pregunta.apartados) ? pregunta.apartados.filter(Boolean).map(String) : [],
+          tabla_enunciado: String(pregunta.tabla_enunciado || pregunta.tabla || '').trim(),
+          opciones,
+          respuesta_correcta: tieneConflicto ? null : respuestaCorrecta,
+          anulada,
+          estado_respuesta: anulada ? 'anulada' : (tieneConflicto ? 'conflicto' : (respuestaCorrecta ? 'vinculada' : 'sin_respuesta')),
+          procedencias_pregunta: procedenciasPregunta,
+          procedencias_respuesta: procedenciasRespuesta,
+          conflicto: pregunta.conflicto || null
+        };
+
+        const numeroClave = String(numero ?? '').match(/\d+/)?.[0] || normalizarClaveTexto(numero);
+        const clave = numero == null
+          ? `${seccion}|texto|${normalizarClaveTexto(normalizada.enunciado)}`
+          : `${seccion}|numero|${numeroClave}`;
+        const existente = porClave.get(clave);
+        if (!existente) {
+          porClave.set(clave, normalizada);
+          return;
+        }
+
+        const textoExistente = normalizarClaveTexto(existente.enunciado);
+        const textoNuevo = normalizarClaveTexto(normalizada.enunciado);
+        if (textoExistente && textoNuevo && textoExistente !== textoNuevo && !textoExistente.includes(textoNuevo) && !textoNuevo.includes(textoExistente)) {
+          conflictos.push({ tipo: 'pregunta_duplicada_incompatible', numero, seccion, detalle: 'Dos archivos contienen textos diferentes para la misma pregunta y sección.' });
+          existente.estado_respuesta = 'conflicto';
+          existente.respuesta_correcta = null;
+        }
+        if ((normalizada.enunciado.length + normalizada.opciones.length * 50) > (existente.enunciado.length + existente.opciones.length * 50)) {
+          existente.enunciado = normalizada.enunciado;
+          existente.apartados = normalizada.apartados;
+          existente.tabla_enunciado = normalizada.tabla_enunciado;
+          existente.opciones = normalizada.opciones;
+        }
+        existente.procedencias_pregunta = normalizarProcedencias([...existente.procedencias_pregunta, ...normalizada.procedencias_pregunta]);
+        existente.procedencias_respuesta = normalizarProcedencias([...existente.procedencias_respuesta, ...normalizada.procedencias_respuesta]);
+        if (existente.respuesta_correcta && normalizada.respuesta_correcta && existente.respuesta_correcta !== normalizada.respuesta_correcta) {
+          conflictos.push({ tipo: 'respuestas_incompatibles', numero, seccion, detalle: `${existente.respuesta_correcta.toUpperCase()} / ${normalizada.respuesta_correcta.toUpperCase()}` });
+          existente.respuesta_correcta = null;
+          existente.estado_respuesta = 'conflicto';
+        } else if (!existente.respuesta_correcta && existente.estado_respuesta !== 'conflicto' && normalizada.respuesta_correcta) {
+          existente.respuesta_correcta = normalizada.respuesta_correcta;
+          existente.estado_respuesta = 'vinculada';
+        }
+      });
+
+      const archivos = Array.isArray(bruto.archivos) && bruto.archivos.length > 0
+        ? bruto.archivos
+        : archivosSeleccionados.map(item => ({ nombre: item.file.name, tipo: item.tipo, paginas: null }));
+      return { preguntas: Array.from(porClave.values()), conflictos, archivos };
+    }
+
+    const calcularResumenImportacion = (preguntas, resultado, archivosSeleccionados) => ({
+      ordinarias: preguntas.filter(p => p.seccion === 'ordinaria').length,
+      reservas: preguntas.filter(p => p.seccion === 'reserva').length,
+      opcionesCompletas: preguntas.filter(p => p.opciones.length >= 2 && p.opciones.every(op => op.texto || op.tabla)).length,
+      respuestasVinculadas: preguntas.filter(p => Boolean(p.respuesta_correcta)).length,
+      sinRespuesta: preguntas.filter(p => !p.respuesta_correcta && !p.anulada && p.estado_respuesta !== 'conflicto').length,
+      conflictos: (resultado?.conflictos || []).length || preguntas.filter(p => p.estado_respuesta === 'conflicto').length,
+      archivos: resultado?.archivos?.length || archivosSeleccionados.length
+    });
 
     const detectarMenuSuperpuesto = () => {
       if (typeof window === 'undefined') return false;
@@ -416,15 +546,16 @@
 
       // Módulo Incorporar Examen (IN)
       const [apiKeyGemini, setApiKeyGemini] = useState(() => localStorage.getItem("gemini_api_key") || "");
-      const [archivoPdf, setArchivoPdf] = useState(null);
+      const [archivosPdf, setArchivosPdf] = useState([]);
       const [procesandoVision, setProcesandoVision] = useState(false);
       const [mensajeEstado, setMensajeEstado] = useState("");
       const [preguntasExtraidas, setPreguntasExtraidas] = useState([]);
+      const [resultadoImportacion, setResultadoImportacion] = useState(null);
       const [datosExamen, setDatosExamen] = useState({
-        titulo: "OEP 2023 — Ayudante de Archivo y Biblioteca (Diputación de Sevilla)",
-        organismo: "Diputación Provincial de Sevilla",
-        año: 2023,
-        categoria: "Oficial"
+        titulo: "",
+        organismo: "",
+        año: "",
+        categoria: ""
       });
       const [guardandoEnSupabase, setGuardandoEnSupabase] = useState(false);
 
@@ -707,8 +838,46 @@
         setExamenActivo(false);
       };
 
+      const claveArchivoPdf = (file) => `${file.name}|${file.size}|${file.lastModified}`;
+
+      const agregarArchivosPdf = (event) => {
+        const nuevos = Array.from(event.target.files || []).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+        setArchivosPdf(prev => {
+          const existentes = new Set(prev.map(item => item.id));
+          return [...prev, ...nuevos.filter(file => !existentes.has(claveArchivoPdf(file))).map(file => ({
+            id: claveArchivoPdf(file),
+            file,
+            tipo: 'auto'
+          }))];
+        });
+        setPreguntasExtraidas([]);
+        setResultadoImportacion(null);
+        setMensajeEstado('');
+        event.target.value = '';
+      };
+
+      const actualizarTipoArchivo = (id, tipo) => {
+        setArchivosPdf(prev => prev.map(item => item.id === id ? { ...item, tipo } : item));
+        setPreguntasExtraidas([]);
+        setResultadoImportacion(null);
+      };
+
+      const quitarArchivoPdf = (id) => {
+        setArchivosPdf(prev => prev.filter(item => item.id !== id));
+        setPreguntasExtraidas([]);
+        setResultadoImportacion(null);
+        setMensajeEstado('');
+      };
+
+      const archivoABase64 = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
       // =======================================================================
-      // PROCESADO INTELIGENTE OPTIMIZADO (SIN AGOTAR TOKENS Y CON AUTO-REPARACIÓN)
+      // PROCESADO CONJUNTO DE ARCHIVOS, OCR SELECTIVO Y REVISIÓN DE CONFLICTOS
       // =======================================================================
       const procesarExamenConVision = async () => {
         const keyLimpia = apiKeyGemini.trim();
@@ -717,74 +886,60 @@
           return;
         }
 
-        if (!archivoPdf) {
-          alert("Por favor selecciona primero el archivo PDF del examen.");
+        if (archivosPdf.length === 0) {
+          alert("Selecciona al menos un PDF del examen.");
           return;
         }
 
         localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
-        setMensajeEstado("Leyendo documento PDF...");
+        setMensajeEstado(`Preparando ${archivosPdf.length} archivo${archivosPdf.length === 1 ? '' : 's'} PDF...`);
 
         try {
-          const base64Pdf = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const res = reader.result;
-              const base64 = res.split(',')[1];
-              resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(archivoPdf);
-          });
+          const archivosCodificados = await Promise.all(archivosPdf.map(async item => ({ ...item, base64: await archivoABase64(item.file) })));
 
           // Catálogo conciso de los 60 temas
           const catalogoTemasGuia = TEMARIO_OFICIAL_60.map(t => `${t.codigo}: ${t.titulo}`).join('\n');
 
-          const promptInstrucciones = `
-Eres un preparador experto en oposiciones de Archivos y Bibliotecas de la Administración Pública.
-Analiza visualmente este examen oficial en PDF.
+          const promptInstrucciones = `Analiza conjuntamente todos los PDF como un único examen, sin inventar contenido.
 
-DIRECTIVAS ESTRICTAS:
-1. EXTRAE TODAS LAS PREGUNTAS (tanto ordinarias como LAS PREGUNTAS DE RESERVA).
-   - En las preguntas de reserva, añade "[RESERVA] " al inicio del enunciado.
-   - Cada pregunta debe contener: numero, tema_codigo, enunciado, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta.
-2. PLANTILLA OFICIAL DE SOLUCIONES:
-   - Lee con máxima atención la plantilla oficial incluida en el documento y asigna la respuesta oficial ("a", "b", "c" o "d") a cada pregunta ordinaria y de reserva.
-3. TEMA OFICIAL:
-   - Asigna a cada pregunta el código exacto de este catálogo oficial de 60 temas:
-${catalogoTemasGuia}
+ESTRATEGIA POR PÁGINA:
+- Usa primero el texto digital cuando sea válido. Activa OCR solo en páginas con texto insuficiente, estructura rota o baja calidad; en ellas corrige orientación, contraste e inclinación.
+- Para casillas, círculos, sombreado, negritas y hojas OMR usa también análisis visual o geométrico.
+- Combina todos los archivos antes de vincular preguntas y respuestas.
 
-OPTIMIZACIÓN DE TOKENS OBLIGATORIA:
-- Sé conciso en el JSON.
-- NO agregues ningún campo de "justificacion" ni comentarios.
-- Devuelve ÚNICAMENTE un array JSON válido sin formato markdown previo ni posterior.
+EXTRACCIÓN:
+- Conserva preguntas divididas entre páginas, apartados, bloques, tablas y cualquier número de opciones con sus letras.
+- Distingue siempre sección "ordinaria" y "reserva", incluso si la numeración se reinicia.
+- Detecta plantillas en tablas, PDF separado o al final, marcas visuales, OMR, negrita y filas anuladas.
+- Vincula cada respuesta por número Y sección. Deduplica referencias repetidas, pero nunca mezcles una ordinaria con una reserva del mismo número.
+- Usa en respuesta_correcta una sola letra minúscula cuando sea inequívoca, o null en cualquier otro caso.
+- Si hay marcas incompatibles, ausencia de respuesta o baja confianza, deja respuesta_correcta en null y registra el conflicto. No adivines.
+- Incluye nombre de archivo y página para la pregunta y para la respuesta.
+- Asigna tema_codigo solo si procede, usando este catálogo: ${catalogoTemasGuia}
 
-Estructura por elemento:
+Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
 {
-  "numero": 1,
-  "tema_codigo": "ESP-01",
-  "enunciado": "...",
-  "opcion_a": "...",
-  "opcion_b": "...",
-  "opcion_c": "...",
-  "opcion_d": "...",
-  "respuesta_correcta": "b"
-}
-`;
+  "archivos": [{"nombre":"archivo.pdf","tipo_detectado":"preguntas|respuestas|mixto|anexo","paginas":1,"estrategias":[{"pagina":1,"metodo":"texto|ocr|visual","confianza":0.9}]}],
+  "preguntas": [{
+    "numero":1,"seccion":"ordinaria|reserva","tema_codigo":"ESP-01","enunciado":"...","apartados":[],"tabla_enunciado":"",
+    "opciones":[{"letra":"A","texto":"...","tabla":""}],"respuesta_correcta":null,"anulada":false,
+    "estado_respuesta":"vinculada|sin_respuesta|conflicto|anulada",
+    "procedencias_pregunta":[{"archivo":"archivo.pdf","pagina":1,"pagina_fin":1}],
+    "procedencias_respuesta":[{"archivo":"plantilla.pdf","pagina":1}],"conflicto":null
+  }],
+  "conflictos":[{"tipo":"...","numero":1,"seccion":"ordinaria","detalle":"...","procedencias":[]}]
+}`;
+
+          const partesArchivos = archivosCodificados.flatMap((item, idx) => [
+            { text: `ARCHIVO ${idx + 1}: ${item.file.name}. Tipo indicado por el usuario: ${item.tipo}.` },
+            { inlineData: { mimeType: 'application/pdf', data: item.base64 } }
+          ]);
 
           const payload = {
             contents: [
               {
-                parts: [
-                  { text: promptInstrucciones },
-                  {
-                    inlineData: {
-                      mimeType: "application/pdf",
-                      data: base64Pdf
-                    }
-                  }
-                ]
+                parts: [{ text: promptInstrucciones }, ...partesArchivos]
               }
             ],
             generationConfig: {
@@ -799,12 +954,12 @@ Estructura por elemento:
             'gemini-3.1-flash-lite'
           ];
 
-          let preguntasParseadas = null;
+          let resultadoNormalizado = null;
           let errorFinal = "";
 
           for (const modelo of modelosCandidatos) {
             try {
-              setMensajeEstado(`Analizando examen completo (ordinarias + reservas) con ${modelo}...`);
+              setMensajeEstado(`Analizando conjuntamente ${archivosPdf.length} archivo${archivosPdf.length === 1 ? '' : 's'} con ${modelo}...`);
               const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${keyLimpia}`;
 
               const respuesta = await fetch(endpoint, {
@@ -824,10 +979,10 @@ Estructura por elemento:
 
               if (!textoRespuesta) continue;
 
-              // Parseo con auto-reparación integrada
-              const parsed = repararJsonArray(textoRespuesta);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                preguntasParseadas = parsed;
+              const parsed = repararJsonImportacion(textoRespuesta);
+              const normalizado = normalizarResultadoImportacion(parsed, archivosPdf);
+              if (normalizado.preguntas.length > 0) {
+                resultadoNormalizado = normalizado;
                 break;
               }
             } catch (errLoop) {
@@ -835,15 +990,17 @@ Estructura por elemento:
             }
           }
 
-          if (!preguntasParseadas) {
+          if (!resultadoNormalizado) {
             throw new Error(errorFinal || "No se pudieron extraer preguntas con los modelos disponibles.");
           }
 
-          setPreguntasExtraidas(preguntasParseadas);
-          setMensajeEstado(`¡Completado! Se han extraído ${preguntasParseadas.length} preguntas (incluyendo reservas) con temas oficiales clasificados.`);
+          const resumen = calcularResumenImportacion(resultadoNormalizado.preguntas, resultadoNormalizado, archivosPdf);
+          setResultadoImportacion(resultadoNormalizado);
+          setPreguntasExtraidas(resultadoNormalizado.preguntas);
+          setMensajeEstado(`Completado: ${resumen.ordinarias} ordinarias, ${resumen.reservas} de reserva, ${resumen.respuestasVinculadas} respuestas vinculadas y ${resumen.conflictos} conflictos.`);
         } catch (err) {
           console.error("Error en extracción:", err);
-          alert("Error procesando el PDF: " + err.message);
+          alert("Error procesando los PDF: " + err.message);
           setMensajeEstado("");
         } finally {
           setProcesandoVision(false);
@@ -858,33 +1015,56 @@ Estructura por elemento:
 
         setGuardandoEnSupabase(true);
         try {
+          const añoLimpio = String(datosExamen.año || '').trim();
+          const año = añoLimpio ? Number.parseInt(añoLimpio, 10) : null;
+          const titulo = datosExamen.titulo.trim() || 'Sin especificar';
           const examenCreado = await ExamenService.crearExamen({
-            titulo: datosExamen.titulo,
-            organismo: datosExamen.organismo,
-            año: parseInt(datosExamen.año) || 2023,
-            categoria: datosExamen.categoria
+            titulo,
+            organismo: datosExamen.organismo.trim() || 'Sin especificar',
+            año: Number.isFinite(año) ? año : null,
+            categoria: datosExamen.categoria.trim() || 'Sin especificar'
           });
 
-          const preguntasParaInsertar = preguntasExtraidas.map(p => ({
-            examen_id: examenCreado.id,
-            tema_codigo: p.tema_codigo || 'ESP-01',
-            enunciado: p.enunciado,
-            opcion_a: p.opcion_a || 'Opción A',
-            opcion_b: p.opcion_b || 'Opción B',
-            opcion_c: p.opcion_c || 'Opción C',
-            opcion_d: p.opcion_d || 'Opción D',
-            respuesta_correcta: (p.respuesta_correcta || 'a').toLowerCase(),
-            justificacion: p.justificacion || '',
-            origen: datosExamen.titulo,
-            año: parseInt(datosExamen.año) || 2023
-          }));
+          const preguntasParaInsertar = preguntasExtraidas.map(p => {
+            const opcion = letra => {
+              const encontrada = p.opciones.find(item => item.letra.toLowerCase() === letra);
+              return encontrada ? `${encontrada.texto}${encontrada.tabla ? `\n${encontrada.tabla}` : ''}` : '';
+            };
+            const contenidoAdicional = [
+              p.apartados.length ? `Apartados:\n${p.apartados.join('\n')}` : '',
+              p.tabla_enunciado ? `Tabla del enunciado:\n${p.tabla_enunciado}` : '',
+              p.opciones.filter(item => !['A', 'B', 'C', 'D'].includes(item.letra)).map(item => `${item.letra}) ${item.texto}${item.tabla ? `\n${item.tabla}` : ''}`).join('\n')
+            ].filter(Boolean).join('\n\n');
+            const trazabilidad = [
+              `Sección: ${p.seccion}. Número original: ${p.numero}.`,
+              `Pregunta: ${formatearProcedencia(p.procedencias_pregunta) || 'sin procedencia detectada'}.`,
+              `Respuesta: ${formatearProcedencia(p.procedencias_respuesta) || 'sin procedencia detectada'}.`,
+              p.conflicto ? `Conflicto: ${typeof p.conflicto === 'string' ? p.conflicto : JSON.stringify(p.conflicto)}.` : ''
+            ].filter(Boolean).join(' ');
+            return {
+              examen_id: examenCreado.id,
+              tema_codigo: p.tema_codigo || 'ESP-01',
+              enunciado: `${p.enunciado}${contenidoAdicional ? `\n\n${contenidoAdicional}` : ''}`,
+              opcion_a: opcion('a'),
+              opcion_b: opcion('b'),
+              opcion_c: opcion('c'),
+              opcion_d: opcion('d'),
+              respuesta_correcta: p.anulada ? null : (p.respuesta_correcta || null),
+              justificacion: trazabilidad,
+              origen: formatearProcedencia(p.procedencias_pregunta) || 'Sin especificar',
+              año: Number.isFinite(año) ? año : null,
+              anulada: Boolean(p.anulada)
+            };
+          });
 
           await ExamenService.crearLotePreguntas(preguntasParaInsertar);
 
-          alert(`¡Éxito! Examen "${datosExamen.titulo}" guardado con ${preguntasParaInsertar.length} preguntas en Supabase.`);
+          alert(`Examen "${titulo}" guardado con ${preguntasParaInsertar.length} preguntas.`);
 
           setPreguntasExtraidas([]);
-          setArchivoPdf(null);
+          setResultadoImportacion(null);
+          setArchivosPdf([]);
+          setDatosExamen({ titulo: '', organismo: '', año: '', categoria: '' });
           setMensajeEstado("");
           await recargarExamenes();
           setModuloActivo("oficiales");
@@ -1174,6 +1354,7 @@ Estructura por elemento:
         if (filtroBloque === "todos") return TEMARIO_OFICIAL_60;
         return TEMARIO_OFICIAL_60.filter(t => t.bloque === filtroBloque);
       }, [filtroBloque]);
+      const resumenRevision = calcularResumenImportacion(preguntasExtraidas, resultadoImportacion, archivosPdf);
 
       if (!autenticado) {
         return (
@@ -1803,7 +1984,7 @@ Estructura por elemento:
                       </h2>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                         <div className="md:col-span-2">
-                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Título del examen</label>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Título del examen <span className="font-normal text-slate-400">(opcional)</span></label>
                           <input
                             type="text"
                             value={datosExamen.titulo}
@@ -1812,7 +1993,7 @@ Estructura por elemento:
                           />
                         </div>
                         <div>
-                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Año</label>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Año <span className="font-normal text-slate-400">(opcional)</span></label>
                           <input
                             type="number"
                             value={datosExamen.año}
@@ -1821,7 +2002,7 @@ Estructura por elemento:
                           />
                         </div>
                         <div>
-                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Organismo convocante</label>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Organismo convocante <span className="font-normal text-slate-400">(opcional)</span></label>
                           <input
                             type="text"
                             value={datosExamen.organismo}
@@ -1830,12 +2011,13 @@ Estructura por elemento:
                           />
                         </div>
                         <div>
-                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Categoría</label>
+                          <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Categoría <span className="font-normal text-slate-400">(opcional)</span></label>
                           <select
                             value={datosExamen.categoria}
                             onChange={e => setDatosExamen({...datosExamen, categoria: e.target.value})}
                             className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-medium"
                           >
+                            <option value="">Selecciona solo si quieres</option>
                             <option value="Oficial">Examen Oficial</option>
                             <option value="Simulacro">Simulacro</option>
                             <option value="Otros">Otros / Editorial</option>
@@ -1846,29 +2028,51 @@ Estructura por elemento:
 
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
                       <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                        3. Cuestionario en PDF
+                        3. Archivos del examen
                       </h2>
                       
                       <div className="p-5 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
                         <div className="space-y-1 text-center md:text-left">
-                          <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona el PDF de la oposición</span>
-                          <span className="text-[11px] text-slate-400 block">Funciona con cualquier PDF oficial de tribunales o diputaciones.</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white block">Selecciona uno o varios PDF</span>
+                          <span className="text-[11px] text-slate-400 block">Puedes añadir más archivos después de la primera selección.</span>
                           <input 
                             type="file" 
-                            accept=".pdf" 
-                            onChange={e => setArchivoPdf(e.target.files[0] || null)}
+                            accept=".pdf,application/pdf"
+                            multiple
+                            onChange={agregarArchivosPdf}
                             className="text-xs text-slate-500 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-[#0F6252] file:text-white file:font-bold cursor-pointer mt-2" 
                           />
                         </div>
 
                         <button
                           onClick={procesarExamenConVision}
-                          disabled={!archivoPdf || procesandoVision}
+                          disabled={archivosPdf.length === 0 || procesandoVision}
                           className="px-6 py-3 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
                         >
-                          {procesandoVision ? "Procesando examen completo..." : "⚡ Procesar examen con visión artificial"}
+                          {procesandoVision ? "Procesando archivos..." : "⚡ Procesar examen"}
                         </button>
                       </div>
+
+                      {archivosPdf.length > 0 && (
+                        <div className="space-y-2">
+                          {archivosPdf.map(item => (
+                            <div key={item.id} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(170px,220px)_auto] gap-2 items-center p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-800 dark:text-white truncate" title={item.file.name}>{item.file.name}</p>
+                                <p className="text-[10px] text-slate-400">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                              </div>
+                              <select value={item.tipo} onChange={e => actualizarTipoArchivo(item.id, e.target.value)} className="w-full p-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-[11px]">
+                                <option value="auto">Detección automática</option>
+                                <option value="preguntas">Preguntas</option>
+                                <option value="respuestas">Plantilla o respuestas</option>
+                                <option value="mixto">Documento mixto</option>
+                                <option value="anexo">Anexo</option>
+                              </select>
+                              <button type="button" onClick={() => quitarArchivoPdf(item.id)} className="px-3 py-2 text-[11px] font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg">Quitar</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {mensajeEstado && (
                         <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-medium">
@@ -1898,12 +2102,55 @@ Estructura por elemento:
                           </button>
                         </div>
 
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                          {[
+                            ['Ordinarias', resumenRevision.ordinarias],
+                            ['Reserva', resumenRevision.reservas],
+                            ['Opciones completas', resumenRevision.opcionesCompletas],
+                            ['Respuestas vinculadas', resumenRevision.respuestasVinculadas],
+                            ['Sin respuesta', resumenRevision.sinRespuesta],
+                            ['Conflictos', resumenRevision.conflictos],
+                            ['Archivos', resumenRevision.archivos]
+                          ].map(([etiqueta, valor]) => (
+                            <div key={etiqueta} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 min-w-0">
+                              <p className="text-lg font-extrabold text-slate-900 dark:text-white">{valor}</p>
+                              <p className="text-[9px] leading-tight font-bold uppercase text-slate-500 break-words">{etiqueta}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {resultadoImportacion?.archivos?.length > 0 && (
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            <p className="text-[10px] font-bold uppercase text-slate-500 mb-2">Archivos procesados</p>
+                            <div className="space-y-1">
+                              {resultadoImportacion.archivos.map((archivo, idx) => (
+                                <p key={`${archivo.nombre}-${idx}`} className="text-[11px] text-slate-700 dark:text-slate-300 break-words">
+                                  <span className="font-bold">{archivo.nombre}</span>{archivo.tipo_detectado || archivo.tipo ? ` · ${archivo.tipo_detectado || archivo.tipo}` : ''}{archivo.paginas ? ` · ${archivo.paginas} pág.` : ''}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {resultadoImportacion?.conflictos?.length > 0 && (
+                          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                            <p className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300 mb-2">Conflictos que requieren revisión</p>
+                            <div className="space-y-1">
+                              {resultadoImportacion.conflictos.map((conflicto, idx) => (
+                                <p key={idx} className="text-[11px] text-amber-900 dark:text-amber-200 break-words">
+                                  {conflicto.seccion ? `${conflicto.seccion} ` : ''}{conflicto.numero != null ? `${conflicto.numero}: ` : ''}{conflicto.detalle || conflicto.tipo || 'Detección no inequívoca'}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
                           {preguntasExtraidas.map((p, idx) => (
                             <div key={idx} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs space-y-2 bg-white dark:bg-slate-900">
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-800 dark:text-white">Pregunta {p.numero}</span>
-                                <div className="flex items-center gap-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <span className="font-bold text-slate-800 dark:text-white">Pregunta {p.numero} · {p.seccion === 'reserva' ? 'Reserva' : 'Ordinaria'}</span>
+                                <div className="flex flex-wrap items-center gap-2">
                                   <label className="text-[11px] font-semibold text-slate-500">Tema:</label>
                                   <select
                                     value={p.tema_codigo}
@@ -1920,26 +2167,39 @@ Estructura por elemento:
 
                                   <label className="text-[11px] font-semibold text-slate-500">Correcta:</label>
                                   <select
-                                    value={p.respuesta_correcta}
+                                    value={p.anulada ? 'anulada' : (p.respuesta_correcta || '')}
                                     onChange={e => {
                                       const nResp = e.target.value;
-                                      setPreguntasExtraidas(prev => prev.map((item, i) => i === idx ? {...item, respuesta_correcta: nResp} : item));
+                                      setPreguntasExtraidas(prev => prev.map((item, i) => i === idx ? {
+                                        ...item,
+                                        respuesta_correcta: nResp && nResp !== 'anulada' ? nResp : null,
+                                        anulada: nResp === 'anulada',
+                                        estado_respuesta: nResp === 'anulada' ? 'anulada' : (nResp ? 'vinculada' : 'sin_respuesta'),
+                                        conflicto: null
+                                      } : item));
                                     }}
                                     className="p-1 border border-emerald-300 rounded bg-emerald-50 dark:bg-emerald-950 font-bold text-emerald-800 dark:text-emerald-300 text-[11px]"
                                   >
-                                    <option value="a">A</option>
-                                    <option value="b">B</option>
-                                    <option value="c">C</option>
-                                    <option value="d">D</option>
+                                    <option value="">Sin respuesta</option>
+                                    {p.opciones.map(opcion => <option key={opcion.letra} value={opcion.letra.toLowerCase()}>{opcion.letra}</option>)}
+                                    <option value="anulada">Anulada</option>
                                   </select>
                                 </div>
                               </div>
-                              <p className="font-medium text-slate-900 dark:text-slate-100">{p.enunciado}</p>
-                              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 dark:text-slate-400">
-                                <div className={p.respuesta_correcta === 'a' ? 'font-bold text-emerald-700' : ''}>A) {p.opcion_a}</div>
-                                <div className={p.respuesta_correcta === 'b' ? 'font-bold text-emerald-700' : ''}>B) {p.opcion_b}</div>
-                                <div className={p.respuesta_correcta === 'c' ? 'font-bold text-emerald-700' : ''}>C) {p.opcion_c}</div>
-                                <div className={p.respuesta_correcta === 'd' ? 'font-bold text-emerald-700' : ''}>D) {p.opcion_d}</div>
+                              <p className="font-medium text-slate-900 dark:text-slate-100 whitespace-pre-wrap">{p.enunciado}</p>
+                              {p.apartados.length > 0 && <div className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap">{p.apartados.join('\n')}</div>}
+                              {p.tabla_enunciado && <pre className="text-[10px] whitespace-pre-wrap overflow-x-auto p-2 bg-slate-50 dark:bg-slate-800 rounded-lg">{p.tabla_enunciado}</pre>}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                                {p.opciones.map(opcion => (
+                                  <div key={opcion.letra} className={p.respuesta_correcta === opcion.letra.toLowerCase() ? 'font-bold text-emerald-700' : ''}>
+                                    {opcion.letra}) {opcion.texto}{opcion.tabla && <pre className="whitespace-pre-wrap mt-1">{opcion.tabla}</pre>}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-[10px] text-slate-500 break-words">
+                                <p><span className="font-bold">Procedencia de la pregunta:</span> {formatearProcedencia(p.procedencias_pregunta) || 'No identificada'}</p>
+                                <p><span className="font-bold">Procedencia de la respuesta:</span> {formatearProcedencia(p.procedencias_respuesta) || 'No identificada'}</p>
+                                {p.conflicto && <p className="font-bold text-amber-700">Conflicto: {typeof p.conflicto === 'string' ? p.conflicto : JSON.stringify(p.conflicto)}</p>}
                               </div>
                             </div>
                           ))}
