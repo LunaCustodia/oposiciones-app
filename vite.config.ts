@@ -1,0 +1,10 @@
+import { nitro } from "nitro/vite";
+import { defineConfig } from "vite";
+import { workflow } from "workflow/vite";
+
+export default defineConfig({
+  plugins: [nitro(), workflow({ runtime: "nodejs24.x", sourcemap: false })],
+  nitro: {
+    serverDir: "./server",
+  },
+});

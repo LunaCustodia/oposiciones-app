@@ -1,0 +1,7 @@
+.vercel
+.env*
+node_modules/
+.output/
+.workflow-data/
+.workflow-vitest/
+/.swc

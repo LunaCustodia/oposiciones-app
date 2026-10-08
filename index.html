@@ -545,7 +545,7 @@
       const [fallosPendientes, setFallosPendientes] = useState([]);
 
       // Módulo Incorporar Examen (IN)
-      const [apiKeyGemini, setApiKeyGemini] = useState(() => localStorage.getItem("gemini_api_key") || "");
+      const [estadoServicioOcr, setEstadoServicioOcr] = useState({ status: "checking" });
       const [archivosPdf, setArchivosPdf] = useState([]);
       const [procesandoVision, setProcesandoVision] = useState(false);
       const [mensajeEstado, setMensajeEstado] = useState("");
@@ -558,6 +558,39 @@
         categoria: ""
       });
       const [guardandoEnSupabase, setGuardandoEnSupabase] = useState(false);
+
+      useEffect(() => {
+        localStorage.removeItem("gemini_api_key");
+      }, []);
+
+      useEffect(() => {
+        if (!autenticado) {
+          setEstadoServicioOcr({ status: "pending_configuration" });
+          return undefined;
+        }
+
+        const controller = new AbortController();
+        const consultarDisponibilidad = async () => {
+          try {
+            const respuesta = await fetch('/api/ocr/availability', {
+              credentials: 'same-origin',
+              signal: controller.signal
+            });
+            if (!respuesta.ok) {
+              setEstadoServicioOcr({ status: "pending_configuration" });
+              return;
+            }
+            const disponibilidad = await respuesta.json();
+            setEstadoServicioOcr({ status: disponibilidad.status });
+          } catch (error) {
+            if (error.name !== 'AbortError') {
+              setEstadoServicioOcr({ status: "pending_configuration" });
+            }
+          }
+        };
+        consultarDisponibilidad();
+        return () => controller.abort();
+      }, [autenticado]);
 
       const cerrarMenu = useCallback((devolverFoco = true) => {
         setMenuAbierto(false);
@@ -825,14 +858,30 @@
         }
       };
 
-      const handleLogin = (e) => {
+      const handleLogin = async (e) => {
         e.preventDefault();
+        setEstadoServicioOcr({ status: "checking" });
+        try {
+          await fetch('/api/ocr/session', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: emailInput, password: passwordInput })
+          });
+        } catch {
+          setEstadoServicioOcr({ status: "pending_configuration" });
+        }
         setModuloActivo("inicio");
         setAutenticado(true);
         localStorage.setItem("auth_session", "true");
       };
 
-      const handleLogout = () => {
+      const handleLogout = async () => {
+        try {
+          await fetch('/api/ocr/session', { method: 'DELETE', credentials: 'same-origin' });
+        } catch {
+          // La sesión local se cierra aunque el servidor no esté disponible.
+        }
         setAutenticado(false);
         localStorage.removeItem("auth_session");
         setExamenActivo(false);
@@ -880,9 +929,8 @@
       // PROCESADO CONJUNTO DE ARCHIVOS, OCR SELECTIVO Y REVISIÓN DE CONFLICTOS
       // =======================================================================
       const procesarExamenConVision = async () => {
-        const keyLimpia = apiKeyGemini.trim();
-        if (!keyLimpia) {
-          alert("Por favor introduce tu clave API de Google AI Studio.");
+        if (estadoServicioOcr.status !== 'available') {
+          alert("El procesamiento en la nube está pendiente de configuración.");
           return;
         }
 
@@ -891,7 +939,6 @@
           return;
         }
 
-        localStorage.setItem("gemini_api_key", keyLimpia);
         setProcesandoVision(true);
         setMensajeEstado(`Preparando ${archivosPdf.length} archivo${archivosPdf.length === 1 ? '' : 's'} PDF...`);
 
@@ -948,46 +995,31 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
             }
           };
 
-          const modelosCandidatos = [
-            'gemini-3.8-flash',
-            'gemini-3.5-flash',
-            'gemini-3.1-flash-lite'
-          ];
-
           let resultadoNormalizado = null;
           let errorFinal = "";
 
-          for (const modelo of modelosCandidatos) {
-            try {
-              setMensajeEstado(`Analizando conjuntamente ${archivosPdf.length} archivo${archivosPdf.length === 1 ? '' : 's'} con ${modelo}...`);
-              const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${keyLimpia}`;
+          try {
+            setMensajeEstado(`Analizando conjuntamente ${archivosPdf.length} archivo${archivosPdf.length === 1 ? '' : 's'} en el servidor...`);
+            const respuesta = await fetch('/api/ocr/gemini', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
 
-              const respuesta = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-
-              if (!respuesta.ok) {
-                const errData = await respuesta.json();
-                errorFinal = errData?.error?.message || `HTTP ${respuesta.status}`;
-                continue;
-              }
-
+            if (!respuesta.ok) {
+              errorFinal = `Servicio no disponible (HTTP ${respuesta.status})`;
+            } else {
               const resultadoJson = await respuesta.json();
               const textoRespuesta = resultadoJson.candidates?.[0]?.content?.parts?.[0]?.text;
-
-              if (!textoRespuesta) continue;
-
-              const parsed = repararJsonImportacion(textoRespuesta);
-              const normalizado = normalizarResultadoImportacion(parsed, archivosPdf);
-              if (normalizado.preguntas.length > 0) {
-                resultadoNormalizado = normalizado;
-                break;
+              if (textoRespuesta) {
+                const parsed = repararJsonImportacion(textoRespuesta);
+                const normalizado = normalizarResultadoImportacion(parsed, archivosPdf);
+                if (normalizado.preguntas.length > 0) resultadoNormalizado = normalizado;
               }
-            } catch (errLoop) {
-              errorFinal = errLoop.message;
             }
+          } catch (errLoop) {
+            errorFinal = errLoop.message;
           }
 
           if (!resultadoNormalizado) {
@@ -1955,27 +1987,15 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-3">
                       <div className="flex items-center justify-between">
                         <h2 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                          1. Clave de Procesamiento Visual
+                          1. Procesamiento en la nube
                         </h2>
-                        <a 
-                          href="https://aistudio.google.com" 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          className="text-xs font-bold text-[#0F6252] hover:underline"
-                        >
-                          Obtener clave gratuita en Google AI Studio ↗
-                        </a>
+                        <span className={`text-xs font-bold ${estadoServicioOcr.status === 'available' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          {estadoServicioOcr.status === 'available' ? 'Disponible' : estadoServicioOcr.status === 'checking' ? 'Comprobando…' : 'Pendiente de configuración'}
+                        </span>
                       </div>
                       <p className="text-[11px] text-slate-500">
-                        Solo necesitas pegarla una vez en este dispositivo. Queda guardada de forma segura en tu navegador.
+                        Las credenciales se mantienen exclusivamente en el servidor. No se activa ningún procesamiento local si el servicio no está disponible.
                       </p>
-                      <input
-                        type="password"
-                        placeholder="Pega aquí tu clave API (ej: AIzaSy...)"
-                        value={apiKeyGemini}
-                        onChange={e => setApiKeyGemini(e.target.value)}
-                        className="w-full p-2.5 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-xs"
-                      />
                     </div>
 
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
@@ -2046,7 +2066,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
 
                         <button
                           onClick={procesarExamenConVision}
-                          disabled={archivosPdf.length === 0 || procesandoVision}
+                          disabled={archivosPdf.length === 0 || procesandoVision || estadoServicioOcr.status !== 'available'}
                           className="px-6 py-3 bg-[#0F6252] hover:bg-[#0c4d40] text-white text-xs font-bold rounded-xl transition shadow-xs disabled:opacity-50 shrink-0"
                         >
                           {procesandoVision ? "Procesando archivos..." : "⚡ Procesar examen"}
