@@ -326,7 +326,7 @@
       const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
       const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
       const [passwordInput, setPasswordInput] = useState("");
-      const [moduloActivo, setModuloActivo] = useState("ingesta");
+      const [moduloActivo, setModuloActivo] = useState("inicio");
       const [modoOscuro, setModoOscuro] = useState(false);
       const [menuSuperpuesto, setMenuSuperpuesto] = useState(detectarMenuSuperpuesto);
       const [menuAbierto, setMenuAbierto] = useState(() => !detectarMenuSuperpuesto());
@@ -636,6 +636,7 @@
 
       const handleLogin = (e) => {
         e.preventDefault();
+        setModuloActivo("inicio");
         setAutenticado(true);
         localStorage.setItem("auth_session", "true");
       };
