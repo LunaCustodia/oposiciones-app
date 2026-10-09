@@ -3,13 +3,19 @@ import { requireCsrf } from "../../../../src/server/auth.js";
 import { readExtractionStatus } from "../../../../src/server/ocr-extractions.js";
 import { readInterpretationStatus } from "../../../../src/server/ocr-interpretation.js";
 import { readBindingStatus } from "../../../../src/server/ocr-binding.js";
-import { cancelImport } from "../../../../src/server/ocr-imports.js";
+import { cancelImport, readImport } from "../../../../src/server/ocr-imports.js";
+import { readReviewDraft } from "../../../../src/server/ocr-review.js";
+import { isImportedInBank } from "../../../../src/server/ocr-review-import.js";
 
 export default defineHandler(async (event) => {
   const ownerId = requireCsrf(event).sub;
   event.res.headers.set("cache-control", "private, no-store");
   const id = event.context.params?.id;
   if (!id) throw new HTTPError("Importación no encontrada", { status: 404 });
+  if (!await readImport(ownerId, id)) throw new HTTPError("Importación no encontrada", { status: 404 });
+  if ((await readReviewDraft(ownerId, id))?.imported || await isImportedInBank(id)) {
+    throw new HTTPError("La evidencia de un examen importado debe conservarse", { status: 409 });
+  }
   const extraction = await readExtractionStatus(ownerId, id);
   if (extraction?.state === "pendiente" || extraction?.state === "procesando") {
     throw new HTTPError("No se puede cancelar mientras la extracción está en curso", { status: 409 });

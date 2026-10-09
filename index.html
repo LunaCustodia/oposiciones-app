@@ -58,27 +58,36 @@
     // =========================================================================
     const ExamenService = {
       async obtenerExamenes() {
-        if (!supabaseClient) return [];
-        const { data, error } = await supabaseClient
+        const legacy = supabaseClient ? await supabaseClient
           .from('examenes_subidos')
           .select('*, preguntas(count)')
-          .order('created_at', { ascending: false });
-        if (error) {
-          console.error("Error obteniendo exámenes:", error);
-          return [];
-        }
-        return data || [];
+          .order('created_at', { ascending: false }) : { data: [] };
+        let owned = [];
+        try {
+          const response = await fetch('/api/ocr/bank', { credentials: 'same-origin' });
+          if (response.ok) owned = (await response.json()).exams || [];
+        } catch { /* Los exámenes anteriores siguen disponibles si falla el acceso privado. */ }
+        const ids = new Set(owned.map(exam => exam.id));
+        return [...owned, ...(legacy.data || []).filter(exam => !ids.has(exam.id))]
+          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
       },
 
       async obtenerPreguntasPorExamen(examenId) {
-        if (!supabaseClient) return [];
-        const { data, error } = await supabaseClient
+        const { data, error } = supabaseClient ? await supabaseClient
           .from('preguntas')
           .select('*')
           .eq('examen_id', examenId)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: true }) : { data: [], error: null };
         if (error) throw error;
-        return data || [];
+        if (data?.length) return data;
+        if (supabaseClient) {
+          const { data: legacyExam } = await supabaseClient.from('examenes_subidos').select('id').eq('id', examenId).maybeSingle();
+          if (legacyExam) return [];
+        }
+        const response = await fetch(`/api/ocr/bank/${encodeURIComponent(examenId)}/questions`, { credentials: 'same-origin' });
+        if (response.status === 404) return [];
+        if (!response.ok) throw new Error('No se pudieron recuperar las preguntas privadas del examen.');
+        return (await response.json()).questions || [];
       },
 
       async guardarPregunta(pregunta) {
@@ -480,6 +489,137 @@
       return pantallaEstrecha || (anchoTablet && interaccionTactil);
     };
 
+    function OcrReviewPanel({ importId, csrfToken, onImported }) {
+      const [review, setReview] = useState(null);
+      const [selectedId, setSelectedId] = useState(null);
+      const [edit, setEdit] = useState(null);
+      const [evidenceId, setEvidenceId] = useState(null);
+      const [filter, setFilter] = useState('todas');
+      const [query, setQuery] = useState('');
+      const [mobileDetail, setMobileDetail] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [message, setMessage] = useState('');
+      const listRef = useRef(null);
+      const scrollRef = useRef(0);
+      const base = `/api/ocr/imports/${encodeURIComponent(importId)}`;
+
+      const load = useCallback(async () => {
+        const response = await fetch(`${base}/review`, { credentials: 'same-origin' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || 'No se pudo abrir la revisión');
+        setReview(payload.review);
+      }, [base]);
+      useEffect(() => { load().catch(error => setMessage(error.message)); }, [load]);
+      useEffect(() => {
+        if (!review?.questions?.length) return;
+        const question = review.questions.find(item => item.id === selectedId) || review.questions[0];
+        if (question.id !== selectedId) setSelectedId(question.id);
+        setEdit(JSON.parse(JSON.stringify(question.value)));
+        setEvidenceId(question.corrected?.evidenceId || question.evidence[0]?.id || null);
+      }, [review, selectedId]);
+      useEffect(() => { if (!mobileDetail && listRef.current) listRef.current.scrollTop = scrollRef.current; }, [mobileDetail]);
+
+      const change = async data => {
+        setBusy(true); setMessage('');
+        try {
+          const response = await fetch(`${base}/review`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken },
+            body: JSON.stringify(data)
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.message || 'No se pudo guardar el borrador');
+          setReview(payload.review); setMessage('Borrador privado guardado.');
+        } catch (error) { setMessage(error.message); }
+        finally { setBusy(false); }
+      };
+      if (!review) return <div className="text-xs text-slate-500">{message || 'Cargando revisión…'}</div>;
+      const selected = review.questions.find(item => item.id === selectedId) || review.questions[0];
+      const stateOf = item => item.value.resolution === 'anulada' ? 'Anulada'
+        : item.value.resolution === 'respuesta' ? 'Vinculada'
+        : item.initialState === 'conflicto' ? 'Conflicto'
+        : item.initialState === 'ambigua' ? 'Ambigua' : 'Sin respuesta';
+      const matches = item => filter === 'todas' ||
+        (filter === 'ordinarias' && item.value.section === 'ordinaria') ||
+        (filter === 'reservas' && item.value.section === 'reserva') ||
+        (filter === 'incompletas' && (item.value.options.filter(option => option.letter.trim() && option.text.trim()).length < 2 || item.value.options.some(option => !option.letter.trim() || !option.text.trim()))) ||
+        (filter === 'vinculadas' && stateOf(item) === 'Vinculada') ||
+        (filter === 'anuladas' && stateOf(item) === 'Anulada') ||
+        (filter === 'sin_respuesta' && stateOf(item) === 'Sin respuesta') ||
+        (filter === 'ambiguas' && stateOf(item) === 'Ambigua') ||
+        (filter === 'conflictos' && stateOf(item) === 'Conflicto');
+      const shown = review.questions.filter(item => matches(item) &&
+        (`${item.value.number} ${item.value.statement}`.toLocaleLowerCase('es').includes(query.toLocaleLowerCase('es'))));
+      const count = predicate => review.questions.filter(predicate).length;
+      const summary = [
+        ['Ordinarias', count(q => q.value.section === 'ordinaria'), 'ordinarias'],
+        ['Reserva', count(q => q.value.section === 'reserva'), 'reservas'],
+        ['Opciones incompletas', count(q => q.value.options.filter(o => o.letter.trim() && o.text.trim()).length < 2 || q.value.options.some(o => !o.letter.trim() || !o.text.trim())), 'incompletas'],
+        ['Vinculadas', count(q => stateOf(q) === 'Vinculada'), 'vinculadas'],
+        ['Anuladas', count(q => stateOf(q) === 'Anulada'), 'anuladas'],
+        ['Sin respuesta', count(q => stateOf(q) === 'Sin respuesta'), 'sin_respuesta'],
+        ['Ambigüedades', count(q => stateOf(q) === 'Ambigua'), 'ambiguas'],
+        ['Conflictos', count(q => stateOf(q) === 'Conflicto'), 'conflictos'],
+        ['Huérfanas', review.orphans.filter(o => !o.decision).length, 'huerfanas']
+      ];
+      const inputClass = 'w-full min-w-0 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs';
+      const setField = (field, value) => setEdit(current => ({ ...current, [field]: value }));
+      const saveQuestion = () => change({ kind: 'question', questionId: selected.id, value: edit, evidenceId });
+      const confirmImport = async () => {
+        if (review.blockers.length || !window.confirm('¿Confirmar e importar este examen al banco? Esta acción guardará las preguntas revisadas.')) return;
+        setBusy(true); setMessage('');
+        try {
+          const response = await fetch(`${base}/review/confirm`, { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken } });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.message || 'No se pudo importar');
+          await load(); onImported?.();
+          setMessage(`Examen ${payload.imported.examId} creado en ${payload.imported.destination === 'oficiales' ? 'Exámenes oficiales' : 'Otros exámenes'}.`);
+        } catch (error) { setMessage(error.message); }
+        finally { setBusy(false); }
+      };
+      const chosenEvidence = selected?.evidence.find(e => e.id === evidenceId);
+      return <section className="space-y-3 text-xs" aria-label="Revisión OCR-06">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><h3 className="text-sm font-bold">Revisión e importación</h3><p className="text-slate-500">Nada se guardará en el banco hasta confirmar.</p></div>
+          <span className="text-slate-500">{review.updatedAt ? `Borrador: ${new Date(review.updatedAt).toLocaleString('es-ES')}` : 'Sin correcciones'}</span>
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-1.5">
+          {summary.map(([label, value, key]) => <button key={key} type="button" onClick={() => setFilter(key)} className={`rounded-lg border p-2 text-left ${filter === key ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-slate-200 dark:border-slate-700'}`}><strong className="block">{value}</strong><span className="text-[10px]">{label}</span></button>)}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input aria-label="Buscar pregunta" placeholder="Buscar número o texto" value={query} onChange={e => setQuery(e.target.value)} className={`${inputClass} sm:max-w-xs`} />
+          <select aria-label="Filtrar preguntas" value={filter} onChange={e => setFilter(e.target.value)} className={`${inputClass} sm:max-w-44`}>
+            <option value="todas">Todas</option>{summary.map(([label,, key]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </div>
+        <div className="md:grid md:grid-cols-2 md:gap-3">
+          <div ref={listRef} onScroll={e => scrollRef.current = e.currentTarget.scrollTop} className={`${mobileDetail ? 'hidden md:block' : 'block'} overflow-auto max-h-[70vh] rounded-xl border border-slate-200 dark:border-slate-700`}>
+            <table className="w-full text-left text-[11px]"><thead className="sticky top-0 bg-slate-100 dark:bg-slate-800"><tr>{['Nº','Sección','Enunciado','Opc.','Respuesta','Estado','Incidencias'].map(h => <th key={h} className="p-2">{h}</th>)}</tr></thead>
+              <tbody>{shown.map(q => <tr key={q.id} onClick={() => { setSelectedId(q.id); setMobileDetail(true); }} className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-emerald-50 ${selected?.id === q.id ? 'bg-emerald-50 dark:bg-emerald-950' : ''}`}>
+                <td className="p-2 font-bold">{q.value.number || '—'}</td><td className="p-2">{q.value.section}</td><td className="p-2 max-w-40 truncate" title={q.value.statement}>{q.value.statement}</td><td className="p-2">{q.value.options.length}</td><td className="p-2">{q.value.answer || '—'}</td><td className="p-2">{stateOf(q)}</td><td className="p-2">{q.issues.length || (review.blockers.some(b => b.questionId === q.id) ? '!' : '—')}</td>
+              </tr>)}</tbody></table>{!shown.length && <p className="p-3 text-slate-500">No hay preguntas con este filtro.</p>}
+          </div>
+          {selected && edit && <div className={`${mobileDetail ? 'block' : 'hidden md:block'} overflow-auto max-h-[70vh] rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-3`}>
+            <button type="button" onClick={() => setMobileDetail(false)} className="md:hidden text-emerald-700 font-bold">← Volver al listado</button>
+            <div className="grid grid-cols-2 gap-2"><label>Número<input className={inputClass} value={edit.number} onChange={e => setField('number', e.target.value)} /></label><label>Sección<select className={inputClass} value={edit.section} onChange={e => setField('section', e.target.value)}><option value="desconocida">Desconocida</option><option value="ordinaria">Ordinaria</option><option value="reserva">Reserva</option></select></label></div>
+            <label className="block">Enunciado<textarea className={inputClass} rows="4" value={edit.statement} onChange={e => setField('statement', e.target.value)} /></label>
+            <div className="space-y-1"><strong>Apartados</strong>{edit.subparts.map((part, i) => <div key={i} className="flex gap-1"><input aria-label="Etiqueta del apartado" className={`${inputClass} w-16`} value={part.label} onChange={e => setField('subparts', edit.subparts.map((p,j) => j === i ? {...p, label: e.target.value} : p))}/><input aria-label="Texto del apartado" className={inputClass} value={part.text} onChange={e => setField('subparts', edit.subparts.map((p,j) => j === i ? {...p, text: e.target.value} : p))}/><button type="button" onClick={() => setField('subparts', edit.subparts.filter((_,j) => j !== i))}>×</button></div>)}<button type="button" className="text-emerald-700" onClick={() => setField('subparts', [...edit.subparts, {label:'',text:''}])}>+ Apartado</button></div>
+            <div className="space-y-1"><strong>Opciones</strong>{edit.options.map((option, i) => <div key={i} className="flex gap-1"><input aria-label="Letra de opción" className={`${inputClass} w-14`} value={option.letter} onChange={e => setField('options', edit.options.map((o,j) => j === i ? {...o, letter:e.target.value} : o))}/><input aria-label="Texto de opción" className={inputClass} value={option.text} onChange={e => setField('options', edit.options.map((o,j) => j === i ? {...o, text:e.target.value} : o))}/><button title="Subir opción" type="button" disabled={i===0} onClick={() => { const items=[...edit.options]; [items[i-1],items[i]]=[items[i],items[i-1]]; setField('options',items); }}>↑</button><button title="Bajar opción" type="button" disabled={i===edit.options.length-1} onClick={() => { const items=[...edit.options]; [items[i+1],items[i]]=[items[i],items[i+1]]; setField('options',items); }}>↓</button><button title="Eliminar opción" type="button" onClick={() => setField('options', edit.options.filter((_,j) => j!==i))}>×</button></div>)}<button type="button" className="text-emerald-700" onClick={() => setField('options', [...edit.options,{letter:'',text:''}])}>+ Opción</button></div>
+            <div className="space-y-1"><strong>Tablas</strong>{edit.tables.map((table,i) => <div key={i} className="border rounded-lg p-2 space-y-1"><input aria-label="Descripción de tabla" className={inputClass} value={table.text} onChange={e => setField('tables', edit.tables.map((t,j) => j===i ? {...t,text:e.target.value} : t))}/><textarea aria-label="Filas de tabla en JSON" className={inputClass} rows="3" defaultValue={JSON.stringify(table.rows)} onBlur={e => { try { const rows=JSON.parse(e.target.value); if (!Array.isArray(rows)) throw Error(); setField('tables', edit.tables.map((t,j) => j===i ? {...t,rows} : t)); } catch { setMessage('Las filas deben ser una matriz JSON de texto.'); } }}/><button type="button" onClick={() => setField('tables', edit.tables.filter((_,j) => j!==i))}>Eliminar tabla</button></div>)}<button type="button" className="text-emerald-700" onClick={() => setField('tables',[...edit.tables,{text:'',rows:[]}])}>+ Tabla</button></div>
+            <div className="grid grid-cols-2 gap-2"><label>Decisión<select className={inputClass} value={edit.resolution} onChange={e => setEdit({...edit,resolution:e.target.value,answer:e.target.value==='anulada'?null:edit.answer})}><option value="pendiente">Dejar pendiente</option><option value="respuesta">Respuesta correcta</option><option value="anulada">Anular</option></select></label><label>Respuesta<select className={inputClass} disabled={edit.resolution!=='respuesta'} value={edit.answer || ''} onChange={e => setField('answer',e.target.value || null)}><option value="">Elegir</option>{edit.options.filter(o=>o.letter.trim()).map((o,i)=><option key={i} value={o.letter}>{o.letter}</option>)}</select></label></div>
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-2 space-y-1"><strong>Detectado automáticamente (sin alterar)</strong><p>{selected.detected.section} {selected.detected.number}: {selected.detected.statement}</p><p>Respuesta: {selected.detected.answer || selected.initialState}; confianza: {Math.round(selected.source.confidence*100)}%</p><p>Procedencia: {selected.source.originalName}, páginas {selected.source.pages.join(', ')}</p><a className="text-emerald-700 underline" target="_blank" rel="noopener noreferrer" href={`${base}/files/${encodeURIComponent(selected.source.fileId)}?view=1#page=${selected.source.pages[0] || 1}`}>Abrir PDF privado de la pregunta</a></div>
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-2 space-y-2"><strong>Evidencias de respuesta</strong>{selected.evidence.length ? <><select aria-label="Elegir evidencia visible" className={inputClass} value={evidenceId || ''} onChange={e => setEvidenceId(e.target.value)}>{selected.evidence.map(e => <option key={e.id} value={e.id}>{e.originalName} p. {e.page} · {e.method} · {Math.round(e.confidence*100)}% · {e.answer || (e.annulled?'ANULAR':'dudosa')}</option>)}</select>{chosenEvidence && <div><p>Coordenadas: {chosenEvidence.coordinates ? JSON.stringify(chosenEvidence.coordinates) : 'No disponibles'}</p><p>Incidencias: {chosenEvidence.issues.join(', ') || 'Ninguna'}</p><a className="text-emerald-700 underline" target="_blank" rel="noopener noreferrer" href={`${base}/files/${encodeURIComponent(chosenEvidence.fileId)}?view=1#page=${chosenEvidence.page}`}>Abrir PDF privado de la plantilla</a>{chosenEvidence.imageId && <img className="mt-2 max-w-full max-h-40 object-contain border" alt="Recorte privado de la respuesta" src={`${base}/binding/evidence/${encodeURIComponent(chosenEvidence.imageId)}`} />}</div>}</> : <p>No hay evidencia de plantilla vinculada.</p>}</div>
+            <button type="button" disabled={busy || !!review.imported} onClick={saveQuestion} className="px-3 py-2 rounded-lg bg-[#0F6252] text-white font-bold disabled:opacity-50">Guardar corrección</button>
+          </div>}
+        </div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2"><strong>Respuestas huérfanas</strong>{review.orphans.length ? review.orphans.map(({evidence,decision}) => <div key={evidence.id} className="flex flex-wrap items-center gap-2 border-t pt-2"><span>{evidence.originalName} p. {evidence.page} · {evidence.printedNumber || '?'} {evidence.answer || '—'} · {decision?.action === 'discard' ? 'Descartada' : decision?.action === 'associate' ? 'Asociada' : 'Pendiente'}</span><select id={`orphan-${evidence.id}`} className={`${inputClass} sm:max-w-52`} defaultValue={decision?.questionId || ''}><option value="">Elegir pregunta</option>{review.questions.map(q => <option key={q.id} value={q.id}>{q.value.section} {q.value.number} · {q.value.statement.slice(0,30)}</option>)}</select><button type="button" disabled={busy || !!review.imported} onClick={() => { const questionId=document.getElementById(`orphan-${evidence.id}`).value; if (questionId) change({kind:'orphan',evidenceId:evidence.id,action:'associate',questionId}); else setMessage('Elige la pregunta que recibirá esta evidencia.'); }} className="text-emerald-700 font-bold">Asociar</button><button type="button" disabled={busy || !!review.imported} onClick={() => change({kind:'orphan',evidenceId:evidence.id,action:'discard'})} className="text-red-700 font-bold">Descartar</button></div>) : <p className="text-slate-500">Ninguna.</p>}</div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2"><label className="block font-bold">Destino<select value={review.destination} disabled={busy || !!review.imported} onChange={e => change({kind:'destination',destination:e.target.value})} className={`${inputClass} mt-1 sm:max-w-60`}><option value="oficiales">Exámenes oficiales</option><option value="otros">Otros exámenes</option></select></label><p className="text-slate-500">Nunca se importará a Mi temario.</p></div>
+        {review.blockers.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-1"><strong>Bloqueos antes de importar ({review.blockers.length})</strong>{review.blockers.map((blocker,i) => <button key={i} type="button" onClick={() => { if (blocker.questionId) { setSelectedId(blocker.questionId); setFilter('todas'); setMobileDetail(true); } else document.getElementById(`orphan-${review.orphans.find(o=>!o.decision)?.evidence.id}`)?.focus(); }} className="block text-left text-red-800 underline">{blocker.message}</button>)}</div>}
+        {message && <p role="status" className="text-emerald-800 dark:text-emerald-300">{message}</p>}
+        {review.imported ? <p className="font-bold text-emerald-800">Examen creado: {review.imported.examId} · {review.imported.destination === 'oficiales' ? 'Exámenes oficiales' : 'Otros exámenes'}</p> : <button type="button" disabled={busy || review.blockers.length > 0} onClick={confirmImport} className="px-4 py-2 rounded-xl bg-[#0F6252] text-white font-bold disabled:opacity-50">Confirmar e importar</button>}
+      </section>;
+    }
+
     function App() {
       const [intentoInicial] = useState(cargarIntentoOficialGuardado);
       const [autenticado, setAutenticado] = useState(false);
@@ -559,6 +699,7 @@
       const [iniciandoInterpretacionOcr, setIniciandoInterpretacionOcr] = useState(false);
       const [vinculacionOcr, setVinculacionOcr] = useState(null);
       const [iniciandoVinculacionOcr, setIniciandoVinculacionOcr] = useState(false);
+      const [mostrarRevisionOcr, setMostrarRevisionOcr] = useState(false);
       const [cargandoImportacionOcr, setCargandoImportacionOcr] = useState(false);
       const [subiendoImportacionOcr, setSubiendoImportacionOcr] = useState(false);
       const [errorArchivosPdf, setErrorArchivosPdf] = useState("");
@@ -637,6 +778,7 @@
           setExtraccionOcr(null);
           setInterpretacionOcr(null);
           setVinculacionOcr(null);
+          setMostrarRevisionOcr(false);
           setCargandoImportacionOcr(false);
           return undefined;
         }
@@ -731,6 +873,7 @@
         const importId = importacionOcr?.id;
         if (!autenticado || !importId || !['completado', 'revision'].includes(interpretacionOcr?.state)) {
           setVinculacionOcr(null);
+          setMostrarRevisionOcr(false);
           return undefined;
         }
         let cancelado = false;
@@ -2242,7 +2385,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                       </div>
                     ) : (
                       <div className="grid gap-3">
-                        {examenesBD.map(ex => {
+                        {examenesBD.filter(ex => ex.ocr06_destino !== 'otros').map(ex => {
                           const numPreguntas = ex.preguntas?.[0]?.count || 0;
                           return (
                             <div key={ex.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2435,6 +2578,12 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 {iniciandoVinculacionOcr ? 'Iniciando vinculación…' : 'Vincular respuestas'}
                               </button>
                             )}
+                            {['completado', 'revision'].includes(vinculacionOcr?.state) && (
+                              <button type="button" onClick={() => setMostrarRevisionOcr(!mostrarRevisionOcr)}
+                                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] rounded-xl">
+                                {mostrarRevisionOcr ? 'Ocultar revisión' : 'Revisar e importar'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={cancelarImportacionOcr}
@@ -2551,6 +2700,10 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                               ))}
                             </div>
                           </div>
+                        )}
+
+                        {mostrarRevisionOcr && ['completado', 'revision'].includes(vinculacionOcr?.state) && (
+                          <OcrReviewPanel importId={importacionOcr.id} csrfToken={csrfToken} onImported={recargarExamenes} />
                         )}
 
                         {importacionOcr.error && (
@@ -2838,6 +2991,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 <span className="text-[10px] font-bold text-[#0F6252] bg-[#0F6252]/10 px-2 py-0.5 rounded uppercase">
                                   {ex.categoria} · {ex.año}
                                 </span>
+                                {ex.ocr06_destino && <span className="ml-1 text-[10px] font-bold text-[#0F6252]">{ex.ocr06_destino === 'otros' ? 'Otros exámenes' : 'Exámenes oficiales'}</span>}
                                 <h3 className="font-bold text-sm text-slate-900 dark:text-white mt-1.5">{ex.titulo}</h3>
                                 <p className="text-xs text-slate-500">{ex.organismo}</p>
                               </div>

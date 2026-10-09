@@ -14,6 +14,7 @@ export default defineHandler(async (event) => {
   if (!id || !fileId) throw new HTTPError("Archivo no encontrado", { status: 404 });
 
   const { file } = await requireImportFile(ownerId, id, fileId);
+  const inline = new URL(event.req.url).searchParams.get("view") === "1";
   const result = await get(file.pathname, { access: "private" });
   if (!result || result.statusCode !== 200 || !result.stream) {
     throw new HTTPError("Archivo no encontrado", { status: 404 });
@@ -23,9 +24,8 @@ export default defineHandler(async (event) => {
     headers: {
       "cache-control": "private, no-store",
       "content-type": "application/pdf",
-      "content-disposition": `attachment; filename="${safeAsciiFilename(file.originalName)}"; filename*=UTF-8''${encodeURIComponent(file.originalName)}`,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeAsciiFilename(file.originalName)}"; filename*=UTF-8''${encodeURIComponent(file.originalName)}`,
       "x-content-type-options": "nosniff",
     },
   });
 });
-
