@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.2",
+    "@vercel/blob": "2.4.0",
     "workflow": "5.2.0"
   },
   "devDependencies": {

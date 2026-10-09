@@ -1,0 +1,13 @@
+import { defineHandler, HTTPError } from "nitro";
+import { requireCsrf } from "../../../../src/server/auth.js";
+import { cancelImport } from "../../../../src/server/ocr-imports.js";
+
+export default defineHandler(async (event) => {
+  const ownerId = requireCsrf(event).sub;
+  event.res.headers.set("cache-control", "private, no-store");
+  const id = event.context.params?.id;
+  if (!id) throw new HTTPError("Importación no encontrada", { status: 404 });
+  await cancelImport(ownerId, id);
+  return { cancelled: true };
+});
+
