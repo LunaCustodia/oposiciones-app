@@ -1,6 +1,6 @@
 import type { OcrSemanticSection } from "./ocr-interpretation.js";
 
-export const OCR_BINDING_VERSION = "ocr05-v2";
+export const OCR_BINDING_VERSION = "ocr05-v6";
 export type OcrBindingState = "pendiente" | "procesando" | "completado" | "revision" | "error";
 export type OcrBindingDisposition = "vinculada" | "anulada" | "sin_respuesta" | "ambigua" | "conflicto";
 export type OcrEvidenceMethod = "textual" | "tabla" | "negrita" | "sombreado" | "casilla" | "circulo" | "omr" | "gemini_visual";
@@ -36,12 +36,25 @@ export interface OcrQuestionBinding {
 }
 
 export interface OcrBindingCounts {
+  questions: number;
+  answerRows: number;
+  associated: number;
+  unequivocal: number;
+  duplicateMarks: number;
   linked: number;
   annulled: number;
   unanswered: number;
   ambiguous: number;
   conflicts: number;
   orphans: number;
+}
+
+export interface OcrBindingIncidentRow {
+  printedNumber: string;
+  section: OcrSemanticSection;
+  page: number;
+  scores: Record<string, number>;
+  issue: string;
 }
 
 export interface OcrBindingResult {
@@ -65,6 +78,7 @@ export interface OcrBindingStatus {
   processedPages: number;
   geminiVisualCalls: number;
   counts: OcrBindingCounts;
+  incidentRows: OcrBindingIncidentRow[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

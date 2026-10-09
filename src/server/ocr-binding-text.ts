@@ -41,15 +41,21 @@ export function parseTextualAnswers(page: OcrPageExtraction, initialSection: Ocr
       const annulled = value.startsWith("ANUL");
       const next = matches[matchIndex + 1];
       const tail = line.slice((match.index ?? 0) + match[0].length, next?.index ?? line.length);
-      const repeatedMark = !annulled && [...tail.matchAll(/\b[A-E]\b/giu)].length > 0;
-      const repeatedRow = matches.some((other, otherIndex) => otherIndex !== matchIndex && other[1] === match[1]);
-      const doubleMark = repeatedMark || repeatedRow;
+      const marks = annulled ? [] : [value,
+        ...[...tail.matchAll(/\b[A-E]\b/giu)].map((item) => item[0].toUpperCase()),
+        ...matches.filter((other, otherIndex) => otherIndex !== matchIndex && other[1] === match[1]
+          && /^[A-E]$/iu.test(other[2]!)).map((item) => item[2]!.toUpperCase())];
+      const options = new Set(marks);
+      const duplicate = marks.length > 1 && options.size === 1;
+      const incompatible = options.size > 1;
+      const markScores = duplicate || incompatible ? Object.fromEntries("ABCDE".split("").map((letter) =>
+        [letter, marks.filter((mark) => mark === letter).length])) : null;
       output.push({
         id: id([page.fileId, page.pageNumber, line, match.index, section]),
-        printedNumber: match[1]!, section, answer: annulled || doubleMark ? null : value,
+        printedNumber: match[1]!, section, answer: annulled || incompatible ? null : value,
         annulled, ambiguous: false, method: format, fileId: page.fileId,
         originalName: page.originalName, page: page.pageNumber, coordinates,
-        imageId: null, confidence: 0.96, markScores: null, issues: doubleMark ? ["doble_marca"] : [],
+        imageId: null, confidence: 0.96, markScores, issues: incompatible ? ["opciones_distintas"] : duplicate ? ["marca_duplicada"] : [],
       });
     }
   }

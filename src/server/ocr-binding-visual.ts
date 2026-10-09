@@ -26,6 +26,7 @@ export interface BoldRow {
   section: OcrSemanticSection;
   answer: string;
   duplicate: boolean;
+  incompatible: boolean;
   x: number;
   y: number;
   width: number;
@@ -62,7 +63,86 @@ export async function detectBoldRows(pdfBytes: Uint8Array, pageNumber: number, e
       }
       const answer = marked[0]!;
       output.push({ number: item.text, section, answer: answer.text, duplicate: marked.length > 1,
+        incompatible: new Set(marked.map((candidate) => candidate.text)).size > 1,
         x: answer.x, y: answer.y, width: answer.width, height: answer.height });
+    }
+    return output;
+  } finally { await task.destroy(); }
+}
+
+export interface TextualMarkScore {
+  evidenceId: string;
+  marks: string[];
+  scores: Record<string, number>;
+  y: number;
+  coordinates: NonNullable<OcrAnswerEvidence["coordinates"]>;
+}
+
+// PDF text operators preserve coincident glyphs that direct text extraction can collapse.
+// A score is glyph occurrences plus the rendered dark-pixel fraction at the glyph.
+export async function inspectTextualMarks(pdfBytes: Uint8Array, pageNumber: number,
+  sources: OcrAnswerEvidence[], visual: { width: number; height: number; scale: number; data: Uint8ClampedArray }): Promise<TextualMarkScore[]> {
+  const task = getDocument({ data: new Uint8Array(pdfBytes), useSystemFonts: true });
+  try {
+    const pdf = await task.promise;
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const items = content.items.flatMap((raw, index) => {
+      if (!("str" in raw) || typeof raw.str !== "string" || !raw.str.trim()) return [];
+      const item = raw as { str: string; transform: number[]; width: number; height: number };
+      return [{ index, text: item.str.toUpperCase(), x: item.transform[4] ?? 0, y: item.transform[5] ?? 0,
+        width: item.width, height: Math.max(item.height, Math.abs(item.transform[3] ?? 0), 6) }];
+    });
+    const output: TextualMarkScore[] = [];
+    for (const source of sources) {
+      const box = source.coordinates;
+      const number = source.printedNumber?.replace(/[.º°):\s]+$/u, "");
+      if (!box || box.coordinateSystem !== "pdf_points_bottom_left" || !number || !/^\d{1,3}$/u.test(number)) continue;
+      const nearby = items.filter((item) => item.y >= box.y - 5 && item.y <= box.y + box.height + 5
+        && item.x <= box.x + box.width + 8 && item.x + item.width >= box.x - 8);
+      const pairs = nearby.flatMap((item) => [...item.text.matchAll(/\b(\d{1,3})\s*[.):-]?\s*([A-E])\b/gu)]
+        .filter((match) => String(Number(match[1])) === String(Number(number)))
+        .map((match) => ({ item, letter: match[2]!, x: item.x + item.width * ((match.index! + match[0].lastIndexOf(match[2]!)) / Math.max(item.text.length, 1)) })));
+      const numberItems = nearby.filter((item) => item.text.trim() === number);
+      const anchor = Math.min(...[...pairs.map((pair) => pair.item.x), ...numberItems.map((item) => item.x)]);
+      if (!Number.isFinite(anchor)) continue;
+      const pairIndexes = new Set(pairs.map((pair) => pair.item.index));
+      const lone = nearby.filter((item) => !pairIndexes.has(item.index) && /^[A-E]$/u.test(item.text.trim())
+        && item.x > anchor + 4 && item.x < box.x + box.width + 12)
+        .map((item) => ({ item, letter: item.text.trim(), x: item.x }));
+      const glyphs = [...pairs, ...lone];
+      if (!glyphs.length) continue;
+      const scores: Record<string, number> = Object.fromEntries("ABCDE".split("").map((letter) => [letter, 0]));
+      const positions = new Map<string, { x: number; y: number; height: number }[]>();
+      for (const glyph of glyphs) {
+        const regionWidth = Math.max(5, Math.min(13, glyph.item.height * 0.75)) * visual.scale;
+        const left = Math.round(glyph.x * visual.scale);
+        const top = Math.round(visual.height - (glyph.item.y + glyph.item.height) * visual.scale);
+        const regionHeight = Math.max(6, glyph.item.height) * visual.scale;
+        let dark = 0; let total = 0;
+        for (let py = Math.max(0, top); py < Math.min(visual.height, top + regionHeight); py += 1) {
+          for (let px = Math.max(0, left); px < Math.min(visual.width, left + regionWidth); px += 1) {
+            const offset = (Math.floor(py) * visual.width + Math.floor(px)) * 4;
+            const luminance = visual.data[offset]! * 0.2126 + visual.data[offset + 1]! * 0.7152 + visual.data[offset + 2]! * 0.0722;
+            if (luminance < 115) dark += 1;
+            total += 1;
+          }
+        }
+        const positionsForLetter = positions.get(glyph.letter) ?? [];
+        if (!positionsForLetter.some((position) => Math.abs(position.x - glyph.x) < 1.5 && Math.abs(position.y - glyph.item.y) < 1.5)) {
+          scores[glyph.letter] += total ? dark / total : 0;
+          positionsForLetter.push({ x: glyph.x, y: glyph.item.y, height: glyph.item.height });
+          positions.set(glyph.letter, positionsForLetter);
+        }
+      }
+      for (const letter of "ABCDE") scores[letter] = Math.round((scores[letter] + glyphs.filter((glyph) => glyph.letter === letter).length) * 1000) / 1000;
+      const minX = Math.min(...glyphs.map((glyph) => glyph.x));
+      const maxX = Math.max(...glyphs.map((glyph) => glyph.x + Math.max(5, glyph.item.height * 0.75)));
+      const minY = Math.min(...glyphs.map((glyph) => glyph.item.y));
+      const maxY = Math.max(...glyphs.map((glyph) => glyph.item.y + glyph.item.height));
+      output.push({ evidenceId: source.id, marks: glyphs.map((glyph) => glyph.letter), scores,
+        y: visual.height - ((minY + maxY) / 2) * visual.scale,
+        coordinates: { coordinateSystem: "pdf_points_bottom_left", x: minX, y: minY, width: maxX - minX, height: maxY - minY } });
     }
     return output;
   } finally { await task.destroy(); }
@@ -160,6 +240,7 @@ export function sampleVisualRow(data: Uint8ClampedArray, width: number, height: 
 export async function renderVisualPage(pdfBytes: Uint8Array, pageNumber: number): Promise<{
   width: number; height: number; scale: number; data: Uint8ClampedArray;
   crop: (y: number, radius: number) => Buffer;
+  cropRegion: (box: { x: number; y: number; width: number; height: number }) => Buffer;
 }> {
   const task = getDocument({ data: new Uint8Array(pdfBytes), useSystemFonts: true });
   const pdf = await task.promise;
@@ -179,6 +260,14 @@ export async function renderVisualPage(pdfBytes: Uint8Array, pageNumber: number)
       const cropCanvas = createCanvas(width, bottom - top);
       cropCanvas.getContext("2d").drawImage(canvas, 0, -top);
       return cropCanvas.toBuffer("image/png");
+    }, cropRegion: (box) => {
+      const left = Math.max(0, Math.floor((box.x - 18) * scale));
+      const top = Math.max(0, Math.floor(height - (box.y + box.height + 9) * scale));
+      const right = Math.min(width, Math.ceil((box.x + box.width + 18) * scale));
+      const bottom = Math.min(height, Math.ceil(height - (box.y - 9) * scale));
+      const cropCanvas = createCanvas(Math.max(1, right - left), Math.max(1, bottom - top));
+      cropCanvas.getContext("2d").drawImage(canvas, -left, -top);
+      return cropCanvas.toBuffer("image/png");
     } };
   } finally { await task.destroy(); }
 }
@@ -196,6 +285,6 @@ export function visualEvidence(page: OcrPageExtraction, sample: VisualSample, im
     coordinates: { coordinateSystem: "pixels_top_left", x: Math.min(...Object.values(row.columns)) - row.radius, y: row.y - row.radius,
       width: Math.max(...Object.values(row.columns)) - Math.min(...Object.values(row.columns)) + row.radius * 2, height: row.radius * 2 },
     imageId, confidence: double ? 1 : Math.min(0.98, Math.max(0.35, topScore)), markScores: scores,
-    issues: double ? ["doble_marca"] : weak ? ["marca_debil"] : answers.length ? [] : ["sin_marca"],
+    issues: double ? ["opciones_distintas"] : weak ? ["marca_debil"] : answers.length ? [] : ["sin_marca"],
   };
 }

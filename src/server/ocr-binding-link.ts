@@ -64,8 +64,8 @@ export function linkAnswers(questions: OcrQuestionCandidate[], evidence: OcrAnsw
     let state: OcrQuestionBinding["state"] = "sin_respuesta";
     let answer: string | null = null;
     let reason: string | null = null;
-    if (values.size > 1 || sources.some((source) => source.issues.includes("doble_marca"))) {
-      state = "conflicto"; reason = values.size > 1 ? "fuentes_incompatibles" : "doble_marca";
+    if (values.size > 1 || sources.some((source) => source.issues.includes("opciones_distintas") || source.issues.includes("doble_marca"))) {
+      state = "conflicto"; reason = values.size > 1 ? "fuentes_incompatibles" : "opciones_distintas";
     } else if (sources.some((source) => source.ambiguous || source.confidence < 0.75) || (sources.length > 0 && !values.size)) {
       state = "ambigua"; reason = "evidencia_insuficiente";
     } else if (values.has("ANULAR")) {
@@ -76,7 +76,14 @@ export function linkAnswers(questions: OcrQuestionCandidate[], evidence: OcrAnsw
     return { questionId: question.id, printedNumber: question.printedNumber, section: question.section,
       questionFileId: question.fileId, questionPages: question.pages, state, answer, sources, reason };
   });
+  const rowKeys = new Set([...bindings.flatMap((binding) => binding.sources), ...orphans]
+    .map((source) => `${source.fileId}:${source.page}:${source.section}:${normalizePrintedNumber(source.printedNumber) ?? source.id}`));
   const counts: OcrBindingCounts = {
+    questions: questions.length,
+    answerRows: rowKeys.size,
+    associated: bindings.filter((item) => item.sources.length > 0).length,
+    unequivocal: bindings.filter((item) => item.state === "vinculada" && !item.sources.some((source) => source.issues.includes("marca_duplicada"))).length,
+    duplicateMarks: bindings.filter((item) => item.sources.some((source) => source.issues.includes("marca_duplicada"))).length,
     linked: bindings.filter((item) => item.state === "vinculada").length,
     annulled: bindings.filter((item) => item.state === "anulada").length,
     unanswered: bindings.filter((item) => item.state === "sin_respuesta").length,

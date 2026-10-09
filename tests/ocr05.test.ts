@@ -5,7 +5,7 @@ import type { OcrAnswerEvidence } from "../src/shared/ocr-binding.js";
 import type { OcrQuestionCandidate } from "../src/shared/ocr-interpretation.js";
 import { linkAnswers } from "../src/server/ocr-binding-link.js";
 import { pageLooksLikeTemplate, parseTextualAnswers } from "../src/server/ocr-binding-text.js";
-import { detectBoldRows, inferVisualRows, renderVisualPage, sampleVisualRow } from "../src/server/ocr-binding-visual.js";
+import { detectBoldRows, inferVisualRows, inspectTextualMarks, renderVisualPage, sampleVisualRow } from "../src/server/ocr-binding-visual.js";
 
 function page(text: string, fileId = "template", pageNumber = 1, tokens: OcrLayoutElement[] = [], lines: OcrLayoutElement[] = []): OcrPageExtraction {
   return { importId: "import", fileId, originalName: `${fileId}.pdf`, fileOrder: 1, pageNumber, method: "direct", text,
@@ -65,10 +65,10 @@ describe("OCR-05 textual templates and linking", () => {
     expect(result.bindings[1]?.state).toBe("sin_respuesta");
     expect(result.counts.orphans).toBe(0);
   });
-  it("flags two visible answer letters in one row instead of choosing one", () => {
+  it("keeps a repeated identical letter associated without fabricating another option", () => {
     const rows = parseTextualAnswers(page("PLANTILLA ORDINARIAS\n32 B B\n33 C"), "desconocida");
-    expect(rows[0]?.issues).toContain("doble_marca");
-    expect(rows[0]?.answer).toBeNull();
+    expect(rows[0]?.issues).toContain("marca_duplicada");
+    expect(rows[0]?.answer).toBe("B");
     expect(rows[1]?.answer).toBe("C");
   });
   it("reports double marks, incompatible templates and weak marks as conflicts or ambiguity", () => {
@@ -89,6 +89,37 @@ describe("OCR-05 textual templates and linking", () => {
 });
 
 describe("OCR-05 geometric marks", () => {
+  it("separates normal, repeated same option, incompatible options and non-text noise", async () => {
+    const document = await PDFDocument.create();
+    const sheet = document.addPage([300, 400]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    const rows: Array<[string, number, string[]]> = [
+      ["1", 320, ["C"]], ["2", 280, ["B", "B"]], ["3", 240, ["A", "D"]], ["4", 200, ["E"]],
+    ];
+    for (const [number, y, letters] of rows) {
+      sheet.drawText(number, { x: 50, y, font, size: 12 });
+      letters.forEach((letter, index) => sheet.drawText(letter, { x: 100 + (letter === "D" ? 20 : 0), y,
+        font, size: 12 }));
+    }
+    sheet.drawCircle({ x: 125, y: 205, size: 1.2, color: rgb(0, 0, 0) });
+    const bytes = await document.save();
+    const visual = await renderVisualPage(bytes, 1);
+    const sources = rows.map(([number, y, letters]) => evidence(`row-${number}`, number, "ordinaria", letters[0]!, {
+      fileId: "template", page: 1, coordinates: { coordinateSystem: "pdf_points_bottom_left", x: 45, y: y - 2, width: 100, height: 16 },
+    }));
+    const scores = await inspectTextualMarks(bytes, 1, sources, visual);
+    expect(scores.map((row) => row.marks)).toEqual([["C"], ["B", "B"], ["A", "D"], ["E"]]);
+    expect(scores[1]!.scores.B).toBeGreaterThan(scores[0]!.scores.B);
+    const classified = sources.map((source, index) => {
+      const row = scores[index]!;
+      const choices = new Set(row.marks);
+      return { ...source, answer: choices.size === 1 ? row.marks[0]! : null, markScores: row.scores,
+        issues: row.marks.length < 2 ? [] : choices.size === 1 ? ["marca_duplicada"] : ["opciones_distintas"] };
+    });
+    const result = linkAnswers(rows.map(([number]) => question(`q${number}`, number, "ordinaria")), classified);
+    expect(result.counts).toMatchObject({ questions: 4, answerRows: 4, associated: 4, unequivocal: 2,
+      duplicateMarks: 1, linked: 3, conflicts: 1, unanswered: 0 });
+  });
   it("reads an unequivocally bold option without treating every option label as a textual answer", async () => {
     const document = await PDFDocument.create();
     const sheet = document.addPage([400, 400]);

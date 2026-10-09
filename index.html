@@ -2571,7 +2571,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 {iniciandoInterpretacionOcr ? 'Iniciando interpretación…' : interpretacionOcr?.state === 'error' ? 'Reintentar interpretación' : 'Interpretar contenido'}
                               </button>
                             )}
-                            {['completado', 'revision'].includes(interpretacionOcr?.state) && (!vinculacionOcr || ['revision', 'error'].includes(vinculacionOcr.state)) && (
+                            {['completado', 'revision'].includes(interpretacionOcr?.state) && (!vinculacionOcr || ['completado', 'revision', 'error'].includes(vinculacionOcr.state)) && (
                               <button type="button" onClick={iniciarVinculacionOcr}
                                 disabled={iniciandoVinculacionOcr || estadoServicioOcr.status !== 'available'}
                                 className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50">
@@ -2690,16 +2690,25 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                             <p className="text-[11px] text-slate-500">{vinculacionOcr.processedPages} / {vinculacionOcr.totalPages} páginas de plantilla</p>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                               {[
-                                ['Respuestas vinculadas', vinculacionOcr.counts.linked],
+                                ['Preguntas detectadas', vinculacionOcr.counts.questions ?? 0],
+                                ['Filas de respuesta detectadas', vinculacionOcr.counts.answerRows ?? 0],
+                                ['Respuestas asociadas', vinculacionOcr.counts.associated ?? 0],
+                                ['Respuestas inequívocas', vinculacionOcr.counts.unequivocal ?? 0],
+                                ['Marcas duplicadas', vinculacionOcr.counts.duplicateMarks ?? 0],
                                 ['Anuladas', vinculacionOcr.counts.annulled],
-                                ['Sin respuesta', vinculacionOcr.counts.unanswered],
+                                ['Preguntas sin fila de respuesta', vinculacionOcr.counts.unanswered],
                                 ['Ambigüedades', vinculacionOcr.counts.ambiguous],
-                                ['Conflictos', vinculacionOcr.counts.conflicts],
+                                ['Conflictos pendientes', vinculacionOcr.counts.conflicts],
                                 ['Respuestas huérfanas', vinculacionOcr.counts.orphans]
                               ].map(([label, value]) => (
                                 <div key={label} className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">{label}:</span> {value}</div>
                               ))}
                             </div>
+                            {(vinculacionOcr.incidentRows || []).map((row, index) => (
+                              <p key={`${row.section}-${row.printedNumber}-${row.page}-${index}`} className="text-[11px] text-amber-800 dark:text-amber-300">
+                                {row.section} {row.printedNumber} · plantilla p. {row.page} · {row.issue === 'marca_duplicada' ? 'marca duplicada' : row.issue === 'opciones_distintas' ? 'opciones distintas' : 'comparación visual'} · puntuaciones {['A', 'B', 'C', 'D', 'E'].map(letter => `${letter}: ${row.scores[letter] ?? 0}`).join(' · ')}
+                              </p>
+                            ))}
                           </div>
                         )}
 
