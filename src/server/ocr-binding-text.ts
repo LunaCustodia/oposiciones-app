@@ -1,0 +1,68 @@
+import { createHash } from "node:crypto";
+import type { OcrPageExtraction } from "../shared/ocr-extraction.js";
+import type { OcrAnswerEvidence } from "../shared/ocr-binding.js";
+import type { OcrAnswerCandidate, OcrSemanticSection } from "../shared/ocr-interpretation.js";
+
+const answerPattern = /(?:^|\s)(\d{1,3})\s*[.):-]?\s*(ANULAR|ANULADA|ANULADO|[A-E])(?=\s|[,;.]|$)/giu;
+const sectionPattern = /\b(?:preguntas?\s+de\s+)?reservas?\b/iu;
+const ordinaryPattern = /\b(?:preguntas?\s+)?ordinarias?\b/iu;
+const templatePattern = /\b(?:plantilla|soluciones|respuestas|clave\s+de\s+respuestas)\b/iu;
+
+function id(parts: unknown[]): string { return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 24); }
+
+export function pageLooksLikeTemplate(page: OcrPageExtraction, manuallyAnswers: boolean, classifiedAnswers: boolean): boolean {
+  if (manuallyAnswers || classifiedAnswers || templatePattern.test(page.text)) return true;
+  const answerLines = page.text.split(/\r?\n/u).filter((line) => [...line.matchAll(answerPattern)].length >= 2);
+  return answerLines.length >= 2;
+}
+
+export function parseTextualAnswers(page: OcrPageExtraction, initialSection: OcrSemanticSection): OcrAnswerEvidence[] {
+  let section = initialSection;
+  const output: OcrAnswerEvidence[] = [];
+  const lines = page.text.split(/\r?\n/u);
+  for (const [lineIndex, line] of lines.entries()) {
+    if (sectionPattern.test(line)) section = "reserva";
+    else if (ordinaryPattern.test(line)) section = "ordinaria";
+    if (/\?/u.test(line) && !templatePattern.test(line)) continue;
+    const matches = [...line.matchAll(answerPattern)];
+    if (!matches.length) continue;
+    const other = line.replace(answerPattern, "").replace(/[\s,;|.()\-:]/gu, "");
+    if (matches.length === 1 && /(?:^|\s)[A-E](?=\s|$)/iu.test(line.replace(answerPattern, " "))) continue;
+    if (other.length > 24 && !templatePattern.test(line)) continue;
+    const format = matches.length > 1 || /[|]/u.test(line) ? "tabla" : "textual";
+    const box = page.lines[lineIndex]?.boundingBoxes[0];
+    const xs = box?.vertices.map((point) => point.x) ?? [];
+    const ys = box?.vertices.map((point) => point.y) ?? [];
+    const coordinates = box && xs.length && ys.length ? { coordinateSystem: box.coordinateSystem,
+      x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) } : null;
+    for (const match of matches) {
+      const value = match[2]!.toUpperCase();
+      const annulled = value.startsWith("ANUL");
+      output.push({
+        id: id([page.fileId, page.pageNumber, line, match.index, section]),
+        printedNumber: match[1]!, section, answer: annulled ? null : value,
+        annulled, ambiguous: false, method: format, fileId: page.fileId,
+        originalName: page.originalName, page: page.pageNumber, coordinates,
+        imageId: null, confidence: 0.96, markScores: null, issues: [],
+      });
+    }
+  }
+  return output;
+}
+
+export function fromSemanticCandidates(answers: OcrAnswerCandidate[]): OcrAnswerEvidence[] {
+  return answers.map((candidate) => {
+    const unverified = candidate.issues.some((issue) => issue.includes("no_verificad") || issue === "formato_no_verificado");
+    const annulled = candidate.state === "anulada";
+    const answer = /^[A-E]$/iu.test(candidate.candidateAnswer ?? "") ? candidate.candidateAnswer!.toUpperCase() : null;
+    return {
+      id: candidate.id, printedNumber: candidate.printedNumber, section: candidate.section,
+      answer: annulled ? null : answer, annulled,
+      ambiguous: unverified || candidate.state === "ambigua" || candidate.state === "sin_determinar" || (!answer && !annulled),
+      method: candidate.format === "tabla" ? "tabla" : candidate.format === "negrita" ? "negrita" : "textual",
+      fileId: candidate.fileId, originalName: candidate.originalName, page: candidate.page,
+      coordinates: null, imageId: null, confidence: unverified ? Math.min(0.5, candidate.confidence) : candidate.confidence,
+      markScores: null, issues: candidate.issues,
+    };
+  });
+}

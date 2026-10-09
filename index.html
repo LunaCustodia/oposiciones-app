@@ -557,6 +557,8 @@
       const [iniciandoExtraccionOcr, setIniciandoExtraccionOcr] = useState(false);
       const [interpretacionOcr, setInterpretacionOcr] = useState(null);
       const [iniciandoInterpretacionOcr, setIniciandoInterpretacionOcr] = useState(false);
+      const [vinculacionOcr, setVinculacionOcr] = useState(null);
+      const [iniciandoVinculacionOcr, setIniciandoVinculacionOcr] = useState(false);
       const [cargandoImportacionOcr, setCargandoImportacionOcr] = useState(false);
       const [subiendoImportacionOcr, setSubiendoImportacionOcr] = useState(false);
       const [errorArchivosPdf, setErrorArchivosPdf] = useState("");
@@ -634,6 +636,7 @@
           setImportacionOcr(null);
           setExtraccionOcr(null);
           setInterpretacionOcr(null);
+          setVinculacionOcr(null);
           setCargandoImportacionOcr(false);
           return undefined;
         }
@@ -723,6 +726,33 @@
           if (temporizador) window.clearTimeout(temporizador);
         };
       }, [autenticado, importacionOcr?.id, extraccionOcr?.state, interpretacionOcr?.state]);
+
+      useEffect(() => {
+        const importId = importacionOcr?.id;
+        if (!autenticado || !importId || !['completado', 'revision'].includes(interpretacionOcr?.state)) {
+          setVinculacionOcr(null);
+          return undefined;
+        }
+        let cancelado = false;
+        let temporizador = null;
+        const consultarVinculacion = async () => {
+          try {
+            const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importId)}/binding`, { credentials: 'same-origin' });
+            if (!respuesta.ok) throw new Error('status_failed');
+            const payload = await respuesta.json();
+            if (cancelado) return;
+            const estado = payload.binding || null;
+            setVinculacionOcr(estado);
+            if (estado && (estado.state === 'pendiente' || estado.state === 'procesando')) {
+              temporizador = window.setTimeout(consultarVinculacion, 2000);
+            }
+          } catch {
+            if (!cancelado) setErrorArchivosPdf('No se pudo recuperar el estado de la vinculación.');
+          }
+        };
+        consultarVinculacion();
+        return () => { cancelado = true; if (temporizador) window.clearTimeout(temporizador); };
+      }, [autenticado, importacionOcr?.id, interpretacionOcr?.state, vinculacionOcr?.state]);
 
       const cerrarMenu = useCallback((devolverFoco = true) => {
         setMenuAbierto(false);
@@ -1204,6 +1234,7 @@
           setImportacionOcr(null);
           setExtraccionOcr(null);
           setInterpretacionOcr(null);
+          setVinculacionOcr(null);
           setMensajeEstado('');
           setErrorArchivosPdf('');
           setProgresoSubidaOcr(0);
@@ -1247,6 +1278,24 @@
           setErrorArchivosPdf(error.message || 'No se pudo iniciar la interpretación.');
         } finally {
           setIniciandoInterpretacionOcr(false);
+        }
+      };
+
+      const iniciarVinculacionOcr = async () => {
+        if (!importacionOcr || !['completado', 'revision'].includes(interpretacionOcr?.state) || iniciandoVinculacionOcr) return;
+        setIniciandoVinculacionOcr(true);
+        setErrorArchivosPdf('');
+        try {
+          const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importacionOcr.id)}/binding`, {
+            method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken }
+          });
+          const payload = await respuesta.json().catch(() => ({}));
+          if (!respuesta.ok) throw new Error(payload.message || payload.statusMessage || 'No se pudo iniciar la vinculación.');
+          setVinculacionOcr(payload.binding || null);
+        } catch (error) {
+          setErrorArchivosPdf(error.message || 'No se pudo iniciar la vinculación.');
+        } finally {
+          setIniciandoVinculacionOcr(false);
         }
       };
 
@@ -2379,10 +2428,17 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 {iniciandoInterpretacionOcr ? 'Iniciando interpretación…' : 'Interpretar contenido'}
                               </button>
                             )}
+                            {['completado', 'revision'].includes(interpretacionOcr?.state) && !vinculacionOcr && (
+                              <button type="button" onClick={iniciarVinculacionOcr}
+                                disabled={iniciandoVinculacionOcr || estadoServicioOcr.status !== 'available'}
+                                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50">
+                                {iniciandoVinculacionOcr ? 'Iniciando vinculación…' : 'Vincular respuestas'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={cancelarImportacionOcr}
-                              disabled={extraccionOcr?.state === 'pendiente' || extraccionOcr?.state === 'procesando' || interpretacionOcr?.state === 'pendiente' || interpretacionOcr?.state === 'procesando'}
+                              disabled={extraccionOcr?.state === 'pendiente' || extraccionOcr?.state === 'procesando' || interpretacionOcr?.state === 'pendiente' || interpretacionOcr?.state === 'procesando' || vinculacionOcr?.state === 'pendiente' || vinculacionOcr?.state === 'procesando'}
                               className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-xl border border-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Cancelar y eliminar archivos
@@ -2468,6 +2524,28 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 ['Plantillas/respuestas', interpretacionOcr.counts.answerCandidates],
                                 ['Anulaciones', interpretacionOcr.counts.annulmentCandidates],
                                 ['Dudosos', interpretacionOcr.counts.doubtfulElements]
+                              ].map(([label, value]) => (
+                                <div key={label} className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">{label}:</span> {value}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {vinculacionOcr && (
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-2">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Estado de la vinculación</p>
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              {vinculacionOcr.state === 'completado' ? 'Vinculación completada' : vinculacionOcr.state === 'revision' || vinculacionOcr.state === 'error' ? 'Requiere revisión' : vinculacionOcr.state === 'pendiente' ? 'Pendiente' : 'Procesando'}
+                            </p>
+                            <p className="text-[11px] text-slate-500">{vinculacionOcr.processedPages} / {vinculacionOcr.totalPages} páginas de plantilla</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                              {[
+                                ['Respuestas vinculadas', vinculacionOcr.counts.linked],
+                                ['Anuladas', vinculacionOcr.counts.annulled],
+                                ['Sin respuesta', vinculacionOcr.counts.unanswered],
+                                ['Ambigüedades', vinculacionOcr.counts.ambiguous],
+                                ['Conflictos', vinculacionOcr.counts.conflicts],
+                                ['Respuestas huérfanas', vinculacionOcr.counts.orphans]
                               ].map(([label, value]) => (
                                 <div key={label} className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">{label}:</span> {value}</div>
                               ))}
