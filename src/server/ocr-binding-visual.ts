@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createCanvas } from "@napi-rs/canvas";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import "pdfjs-dist/legacy/build/pdf.worker.mjs";
+import { pdfJsImageOptions } from "./ocr-pdfjs-assets.js";
 import type { OcrPageExtraction, OcrLayoutElement } from "../shared/ocr-extraction.js";
 import type { OcrAnswerEvidence } from "../shared/ocr-binding.js";
 import type { OcrSemanticSection } from "../shared/ocr-interpretation.js";
@@ -34,7 +35,7 @@ export interface BoldRow {
 }
 
 export async function detectBoldRows(pdfBytes: Uint8Array, pageNumber: number, extraction: OcrPageExtraction): Promise<BoldRow[]> {
-  const task = getDocument({ data: new Uint8Array(pdfBytes), useSystemFonts: true });
+  const task = getDocument({ data: new Uint8Array(pdfBytes), ...pdfJsImageOptions() });
   try {
     const pdf = await task.promise;
     const page = await pdf.getPage(pageNumber);
@@ -82,7 +83,7 @@ export interface TextualMarkScore {
 // A score is glyph occurrences plus the rendered dark-pixel fraction at the glyph.
 export async function inspectTextualMarks(pdfBytes: Uint8Array, pageNumber: number,
   sources: OcrAnswerEvidence[], visual: { width: number; height: number; scale: number; data: Uint8ClampedArray }): Promise<TextualMarkScore[]> {
-  const task = getDocument({ data: new Uint8Array(pdfBytes), useSystemFonts: true });
+  const task = getDocument({ data: new Uint8Array(pdfBytes), ...pdfJsImageOptions() });
   try {
     const pdf = await task.promise;
     const page = await pdf.getPage(pageNumber);
@@ -237,16 +238,16 @@ export function sampleVisualRow(data: Uint8ClampedArray, width: number, height: 
   return { row, scores, answers, weak };
 }
 
-export async function renderVisualPage(pdfBytes: Uint8Array, pageNumber: number): Promise<{
+export async function renderVisualPage(pdfBytes: Uint8Array, pageNumber: number, scale = 2.5): Promise<{
   width: number; height: number; scale: number; data: Uint8ClampedArray;
   crop: (y: number, radius: number) => Buffer;
   cropRegion: (box: { x: number; y: number; width: number; height: number }) => Buffer;
+  cropPixels: (x: number, y: number, width: number, height: number) => Buffer;
 }> {
-  const task = getDocument({ data: new Uint8Array(pdfBytes), useSystemFonts: true });
+  const task = getDocument({ data: new Uint8Array(pdfBytes), ...pdfJsImageOptions() });
   const pdf = await task.promise;
   try {
     const page = await pdf.getPage(pageNumber);
-    const scale = 2.5;
     const viewport = page.getViewport({ scale });
     const width = Math.ceil(viewport.width); const height = Math.ceil(viewport.height);
     const canvas = createCanvas(width, height);
@@ -259,6 +260,12 @@ export async function renderVisualPage(pdfBytes: Uint8Array, pageNumber: number)
       const bottom = Math.min(height, Math.ceil(y + Math.max(18, radius * 2)));
       const cropCanvas = createCanvas(width, bottom - top);
       cropCanvas.getContext("2d").drawImage(canvas, 0, -top);
+      return cropCanvas.toBuffer("image/png");
+    }, cropPixels: (x, y, cropWidth, cropHeight) => {
+      const left = Math.max(0, Math.floor(x)); const top = Math.max(0, Math.floor(y));
+      const right = Math.min(width, Math.ceil(x + cropWidth)); const bottom = Math.min(height, Math.ceil(y + cropHeight));
+      const cropCanvas = createCanvas(Math.max(1, right - left), Math.max(1, bottom - top));
+      cropCanvas.getContext("2d").drawImage(canvas, -left, -top);
       return cropCanvas.toBuffer("image/png");
     }, cropRegion: (box) => {
       const left = Math.max(0, Math.floor((box.x - 18) * scale));

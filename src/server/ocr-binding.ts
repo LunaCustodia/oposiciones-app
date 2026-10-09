@@ -10,8 +10,9 @@ import { readInterpretationResult } from "./ocr-interpretation.js";
 import { linkAnswers } from "./ocr-binding-link.js";
 import { fromSemanticCandidates, pageLooksLikeTemplate, parseTextualAnswers } from "./ocr-binding-text.js";
 import { detectBoldRows, inferVisualRows, inspectTextualMarks, renderVisualPage, sampleVisualRow, visualEvidence } from "./ocr-binding-visual.js";
+import { analyzeScannedOmr, probeScannedOmrPages, scannedOmrCrop, scannedOmrEvidence } from "./ocr-binding-scanned.js";
 
-export interface BindingPageRef { fileId: string; pageNumber: number; }
+export interface BindingPageRef { fileId: string; pageNumber: number; visualOmr?: boolean; }
 const root = "ocr02/imports";
 const zeroCounts = () => ({ questions: 0, answerRows: 0, associated: 0, unequivocal: 0, duplicateMarks: 0,
   linked: 0, annulled: 0, unanswered: 0, ambiguous: 0, conflicts: 0, orphans: 0 });
@@ -50,19 +51,33 @@ export async function buildBindingPlan(ownerId: string, manifest: OcrImportManif
   const extraction = await readExtractionStatus(ownerId, manifest.id);
   if (!interpretation || extraction?.state !== "completado") throw new HTTPError("La interpretación OCR-04 debe estar terminada", { status: 409 });
   const refs: BindingPageRef[] = [];
-  const digest = createHash("sha256").update(`${OCR_BINDING_VERSION}\n${interpretation.fingerprint}\n`);
+  // Keep existing text-template fingerprints (and their review drafts) stable.
+  // Only image-routed imports need a new OCR-05 run.
+  const digest = createHash("sha256").update(`ocr05-v7\n${interpretation.fingerprint}\n`);
   for (const file of [...manifest.files].sort((a, b) => a.order - b.order)) {
     const progress = extraction.files.find((item) => item.fileId === file.id);
     if (!progress || progress.state !== "completado" || !progress.totalPages) throw new HTTPError("Falta extracción de un PDF", { status: 409 });
     digest.update(`${file.id}:${file.type}:${file.order}\n`);
+    const pages: OcrPageExtraction[] = [];
     for (let pageNumber = 1; pageNumber <= progress.totalPages; pageNumber += 1) {
       const page = await readPageExtraction(ownerId, manifest.id, file.id, pageNumber);
       if (!page?.quality.valid) throw new HTTPError("Falta extracción de una página", { status: 409 });
       digest.update(`${page.sourceSha256}:${page.pageNumber}\n`);
+      pages.push(page);
+    }
+    const pdf = await readPrivateImportPdf(ownerId, manifest.id, file.id);
+    const visualPages = await probeScannedOmrPages(pdf.bytes, pages.map((page) => page.pageNumber),
+      new Map(pages.map((page) => [page.pageNumber, page.text])));
+    for (const page of pages) {
+      const pageNumber = page.pageNumber;
       const classified = interpretation.blocks.some((block) => block.fileId === file.id && block.corePages.includes(pageNumber)
         && ["respuestas", "mixto"].includes(block.classification));
       const candidate = interpretation.answers.some((answer) => answer.fileId === file.id && answer.page === pageNumber);
-      if (pageLooksLikeTemplate(page, file.type === "respuestas" || file.type === "mixto", classified || candidate)) refs.push({ fileId: file.id, pageNumber });
+      const visualOmr = visualPages.has(pageNumber);
+      if (visualOmr) digest.update(`${OCR_BINDING_VERSION}:visual:${file.id}:${pageNumber}\n`);
+      if (visualOmr || pageLooksLikeTemplate(page, file.type === "respuestas" || file.type === "mixto", classified || candidate)) {
+        refs.push({ fileId: file.id, pageNumber, visualOmr });
+      }
     }
   }
   return { fingerprint: digest.digest("hex"), refs };
@@ -137,7 +152,7 @@ export async function processBindingPage(ownerId: string, importId: string, fing
   // directo no informa de marcas o letras resaltadas en el PDF.
   {
     const manifest = await readPrivateImportPdf(ownerId, importId, ref.fileId);
-    const visual = await renderVisualPage(manifest.bytes, ref.pageNumber);
+    const visual = await renderVisualPage(manifest.bytes, ref.pageNumber, ref.visualOmr ? 350 / 72 : 2.5);
     for (const mark of await inspectTextualMarks(manifest.bytes, ref.pageNumber, textual, visual)) {
       const source = evidence.find((item) => item.id === mark.evidenceId);
       if (!source) continue;
@@ -165,7 +180,26 @@ export async function processBindingPage(ownerId: string, importId: string, fing
           access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
       source.imageId = imageId;
     }
-    const rows = inferVisualRows(page, visual.width, visual.height, visual.scale);
+    const scanned = ref.visualOmr ? analyzeScannedOmr(visual.data, visual.width, visual.height, visual.scale, page.text) : null;
+    if (ref.visualOmr && !scanned?.structural) throw new Error("binding_scanned_grid_missing");
+    for (const row of scanned?.rows ?? []) {
+      for (const source of textual.filter((item) => item.printedNumber === row.number && item.section === "desconocida")) {
+        source.section = row.section;
+      }
+      const imageId = hash(`${fingerprint}:${ref.fileId}:${ref.pageNumber}:scan:${row.section}:${row.number}`).slice(0, 24);
+      const crop = scannedOmrCrop(scanned!, row) ?? visual.cropPixels(row.x - row.radius, row.y - row.radius * 1.7,
+        row.width + row.radius * 2, row.radius * 3.4);
+      await put(path(ownerId, importId, `evidence/${imageId}.png`), crop, {
+        access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
+      evidence.push(scannedOmrEvidence(page, row, imageId));
+      if (row.weak || row.answers.length > 1) {
+        const proposals = await geminiVisualProposal(ownerId, importId, crop);
+        evidence.push(...proposals.filter((proposal) => proposal.printedNumber === row.number)
+          .map((proposal) => ({ ...proposal, section: row.section, fileId: ref.fileId,
+            originalName: page.originalName, page: ref.pageNumber, imageId })));
+      }
+    }
+    const rows = scanned?.structural ? [] : inferVisualRows(page, visual.width, visual.height, visual.scale);
     for (const row of rows) {
       const sample = sampleVisualRow(visual.data, visual.width, visual.height, row);
       if (!sample.answers.length && !sample.weak) continue;
@@ -174,7 +208,7 @@ export async function processBindingPage(ownerId: string, importId: string, fing
         access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
       evidence.push(visualEvidence(page, sample, imageId));
     }
-    if (rows.length === 0) {
+    if (rows.length === 0 && !scanned?.structural) {
       for (const row of await detectBoldRows(manifest.bytes, ref.pageNumber, page)) {
         const imageId = hash(`${fingerprint}:${ref.fileId}:${ref.pageNumber}:bold:${row.section}:${row.number}`).slice(0, 24);
         await put(path(ownerId, importId, `evidence/${imageId}.png`), visual.crop(visual.height - row.y * visual.scale, 10), {

@@ -11,9 +11,12 @@ const templatePattern = /\b(?:plantilla|soluciones|respuestas|clave\s+de\s+respu
 function id(parts: unknown[]): string { return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 24); }
 
 export function pageLooksLikeTemplate(page: OcrPageExtraction, manuallyAnswers: boolean, classifiedAnswers: boolean): boolean {
-  if (manuallyAnswers || classifiedAnswers || templatePattern.test(page.text)) return true;
-  const answerLines = page.text.split(/\r?\n/u).filter((line) => [...line.matchAll(answerPattern)].length >= 2);
-  return answerLines.length >= 2;
+  const rows = parseTextualAnswers(page, "desconocida");
+  if (!rows.length) return false;
+  const optionLines = page.text.split(/\r?\n/u).filter((line) => /^\s*[A-E]\s*[).]/iu.test(line)).length;
+  const strongHeading = /\b(?:plantilla|soluciones|clave\s+de\s+respuestas)\b/iu.test(page.text);
+  if (optionLines >= 2 && !(strongHeading && rows.length >= 3)) return false;
+  return strongHeading || manuallyAnswers || classifiedAnswers || rows.length >= 3;
 }
 
 export function parseTextualAnswers(page: OcrPageExtraction, initialSection: OcrSemanticSection): OcrAnswerEvidence[] {

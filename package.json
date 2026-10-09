@@ -8,11 +8,11 @@
     "node": "24.x"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/copy-pdfjs-fallback.mjs",
     "dev": "vite",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "vercel-build": "vite build"
+    "vercel-build": "vite build && node scripts/copy-pdfjs-fallback.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.10",

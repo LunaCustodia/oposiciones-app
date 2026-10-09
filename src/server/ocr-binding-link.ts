@@ -9,12 +9,39 @@ export function normalizePrintedNumber(value: string | null): string | null {
 
 function key(section: OcrSemanticSection, number: string): string { return `${section}:${number}`; }
 
+// OCR-04 preserves the detected text unchanged. For linking only, a damaged
+// printed digit can be recovered when the entire section is a verified,
+// ordered 1..N sequence with enough legible anchors. Otherwise leave it open.
+export function recoverSequentialNumbers(questions: OcrQuestionCandidate[]): OcrQuestionCandidate[] {
+  const recovered = [...questions];
+  for (const section of ["ordinaria", "reserva"] as const) {
+    const indexes = questions.flatMap((question, index) => question.section === section ? [index] : []);
+    if (indexes.length < 3) continue;
+    const known = indexes.filter((index, position) => normalizePrintedNumber(questions[index]!.printedNumber) === String(position + 1));
+    const mismatched = indexes.some((index, position) => {
+      const number = normalizePrintedNumber(questions[index]!.printedNumber);
+      return number !== null && number !== String(position + 1);
+    });
+    if (mismatched || known.length < Math.max(3, Math.ceil(indexes.length * 0.75))) continue;
+    const pages = indexes.map((index) => questions[index]!.pages[0] ?? 0);
+    if (pages.some((page, index) => index > 0 && page < pages[index - 1]!)) continue;
+    for (const [position, index] of indexes.entries()) {
+      if (normalizePrintedNumber(questions[index]!.printedNumber) !== null) continue;
+      recovered[index] = { ...questions[index]!, printedNumber: String(position + 1) };
+    }
+  }
+  return recovered;
+}
+
 export function linkAnswers(questions: OcrQuestionCandidate[], evidence: OcrAnswerEvidence[]): {
   bindings: OcrQuestionBinding[]; orphans: OcrAnswerEvidence[]; counts: OcrBindingCounts;
 } {
+  const linkedQuestions = recoverSequentialNumbers(questions);
+  const inferredQuestionIds = new Set(linkedQuestions.filter((question, index) => question.printedNumber !== questions[index]!.printedNumber)
+    .map((question) => question.id));
   const byKey = new Map<string, OcrQuestionCandidate[]>();
   const byNumber = new Map<string, OcrQuestionCandidate[]>();
-  for (const question of questions) {
+  for (const question of linkedQuestions) {
     const number = normalizePrintedNumber(question.printedNumber);
     if (!number) continue;
     const exact = key(question.section, number);
@@ -55,9 +82,10 @@ export function linkAnswers(questions: OcrQuestionCandidate[], evidence: OcrAnsw
       : byKey.get(key(source.section, number)) ?? [];
     if (matches.length !== 1) { orphans.push(source); continue; }
     const id = matches[0]!.id;
-    assigned.set(id, [...assigned.get(id) ?? [], source]);
+    assigned.set(id, [...assigned.get(id) ?? [], inferredQuestionIds.has(id)
+      ? { ...source, issues: [...source.issues, "numero_pregunta_inferido_por_secuencia"] } : source]);
   }
-  const bindings: OcrQuestionBinding[] = questions.map((question) => {
+  const bindings: OcrQuestionBinding[] = linkedQuestions.map((question) => {
     const sources = assigned.get(question.id) ?? [];
     const strong = sources.filter((source) => !source.ambiguous && source.confidence >= 0.75);
     const values = new Set(strong.map((source) => source.annulled ? "ANULAR" : source.answer).filter(Boolean));
