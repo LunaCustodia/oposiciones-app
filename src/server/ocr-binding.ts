@@ -131,8 +131,9 @@ export async function processBindingPage(ownerId: string, importId: string, fing
   const evidence: OcrAnswerEvidence[] = [...textual];
   const visualCue = /\b(?:omr|casillas?|c[ií]rculos?|sombread[oa]s?)\b/iu.test(page.text)
     || semantic.some((candidate) => ["omr", "casilla", "sombreado"].includes(candidate.format));
-  const likelyGrid = page.tokens.filter((token) => /^[A-E]$/iu.test(token.text.trim())).length >= 3;
-  if (visualCue || (textual.length === 0 && likelyGrid)) {
+  // Toda página de plantilla seleccionada exige inspección visual: el texto
+  // directo no informa de marcas o letras resaltadas en el PDF.
+  {
     const manifest = await readPrivateImportPdf(ownerId, importId, ref.fileId);
     const visual = await renderVisualPage(manifest.bytes, ref.pageNumber);
     const rows = inferVisualRows(page, visual.width, visual.height, visual.scale);
@@ -149,10 +150,10 @@ export async function processBindingPage(ownerId: string, importId: string, fing
         const imageId = hash(`${fingerprint}:${ref.fileId}:${ref.pageNumber}:bold:${row.section}:${row.number}`).slice(0, 24);
         await put(path(ownerId, importId, `evidence/${imageId}.png`), visual.crop(visual.height - row.y * visual.scale, 10), {
           access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
-        evidence.push({ id: imageId, printedNumber: row.number, section: row.section, answer: row.answer,
+      evidence.push({ id: imageId, printedNumber: row.number, section: row.section, answer: row.duplicate ? null : row.answer,
           annulled: false, ambiguous: false, method: "negrita", fileId: ref.fileId, originalName: page.originalName,
           page: ref.pageNumber, coordinates: { coordinateSystem: "pdf_points_bottom_left", x: row.x, y: row.y, width: row.width, height: row.height },
-          imageId, confidence: 0.96, markScores: null, issues: [] });
+          imageId, confidence: 0.96, markScores: null, issues: row.duplicate ? ["doble_marca"] : [] });
       }
     }
     if (visualCue && textual.length === 0 && evidence.length === 0) {

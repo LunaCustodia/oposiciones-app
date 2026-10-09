@@ -54,6 +54,23 @@ describe("OCR-05 textual templates and linking", () => {
     expect(result.counts.orphans).toBe(1);
     expect(result.counts.unanswered).toBe(2);
   });
+  it("infers an unlabeled row from unequivocal rows on the same template page", () => {
+    const sources = [evidence("a", "1", "desconocida", "B", { fileId: "template", page: 16 }),
+      evidence("b", "6", "desconocida", "C", { fileId: "template", page: 16 }),
+      evidence("c", "7", "desconocida", "D", { fileId: "template", page: 16 })];
+    const result = linkAnswers([question("ordinary-1", "1", "ordinaria"), question("reserve-1", "1", "reserva"),
+      question("ordinary-6", "6", "ordinaria"), question("ordinary-7", "7", "ordinaria")], sources);
+    expect(result.counts.linked).toBe(3);
+    expect(result.bindings[0]?.answer).toBe("B");
+    expect(result.bindings[1]?.state).toBe("sin_respuesta");
+    expect(result.counts.orphans).toBe(0);
+  });
+  it("flags two visible answer letters in one row instead of choosing one", () => {
+    const rows = parseTextualAnswers(page("PLANTILLA ORDINARIAS\n32 B B\n33 C"), "desconocida");
+    expect(rows[0]?.issues).toContain("doble_marca");
+    expect(rows[0]?.answer).toBeNull();
+    expect(rows[1]?.answer).toBe("C");
+  });
   it("reports double marks, incompatible templates and weak marks as conflicts or ambiguity", () => {
     const result = linkAnswers([question("q1", "1", "ordinaria"), question("q2", "2", "ordinaria"), question("q3", "3", "ordinaria")], [
       evidence("a", "1", "ordinaria", "A"), evidence("b", "1", "ordinaria", "B"),
@@ -83,6 +100,18 @@ describe("OCR-05 geometric marks", () => {
     }
     const found = await detectBoldRows(await document.save(), 1, page("PLANTILLA\n1 A B C D"));
     expect(found.map((item) => item.answer)).toEqual(["C"]);
+  });
+  it("preserves two bold marks on the same row as a conflict", async () => {
+    const document = await PDFDocument.create();
+    const sheet = document.addPage([400, 400]);
+    const regular = await document.embedFont(StandardFonts.Helvetica);
+    const bold = await document.embedFont(StandardFonts.HelveticaBold);
+    sheet.drawText("32", { x: 50, y: 300, font: regular, size: 12 });
+    for (const [letter, x] of [["A", 90], ["B", 130], ["B", 165], ["C", 205], ["D", 245]] as const) {
+      sheet.drawText(letter, { x, y: 300, font: letter === "B" ? bold : regular, size: 12 });
+    }
+    const found = await detectBoldRows(await document.save(), 1, page("PLANTILLA\n32 A B B C D"));
+    expect(found).toMatchObject([{ number: "32", answer: "B", duplicate: true }]);
   });
   it("ignores empty borders and flags a weak or shaded mark for review", () => {
     const width = 100; const height = 60;

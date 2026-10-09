@@ -25,6 +25,7 @@ export interface BoldRow {
   number: string;
   section: OcrSemanticSection;
   answer: string;
+  duplicate: boolean;
   x: number;
   y: number;
   width: number;
@@ -53,15 +54,15 @@ export async function detectBoldRows(pdfBytes: Uint8Array, pageNumber: number, e
       const letters = items.filter((candidate) => /^[A-E]$/u.test(candidate.text) && Math.abs(candidate.y - item.y) <= 4 && candidate.x > item.x);
       if (new Set(letters.map((candidate) => candidate.text)).size < 3) continue;
       const marked = letters.filter((candidate) => candidate.bold);
-      if (marked.length !== 1 || letters.some((candidate) => candidate !== marked[0] && candidate.bold)) continue;
+      if (marked.length === 0) continue;
       let section: OcrSemanticSection = "desconocida";
       for (const line of lines.filter((line) => line.y !== null && line.y >= item.y - 4).sort((a, b) => b.y! - a.y!)) {
         if (/\breservas?\b/iu.test(line.text)) section = "reserva";
         else if (/\bordinarias?\b/iu.test(line.text)) section = "ordinaria";
       }
       const answer = marked[0]!;
-      output.push({ number: item.text, section, answer: answer.text, x: answer.x, y: answer.y,
-        width: answer.width, height: answer.height });
+      output.push({ number: item.text, section, answer: answer.text, duplicate: marked.length > 1,
+        x: answer.x, y: answer.y, width: answer.width, height: answer.height });
     }
     return output;
   } finally { await task.destroy(); }

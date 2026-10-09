@@ -19,8 +19,7 @@ import { callGemini } from "./connections.js";
 import { readExtractionStatus, readPageExtraction } from "./ocr-extractions.js";
 import { OCR_INTERPRETATION_JSON_SCHEMA, parseWithSingleRepair, type ModelInterpretation } from "./ocr-interpretation-schema.js";
 
-const MAX_CORE_PAGES = 3;
-const MAX_CORE_CHARACTERS = 18_000;
+const MAX_CORE_PAGES = 1;
 const ROOT = "ocr02/imports";
 
 const PROMPT = `Interpreta exclusivamente el material OCR-03 adjunto. Copia literalmente los textos: no completes ni deduzcas palabras, números, opciones, respuestas o secciones que falten. Si falta algo, deja el campo vacío o nulo y marca una incidencia. Identifica preguntas ordinarias, reservas (aunque su numeración comience otra vez), apartados, opciones, tablas, candidatos de plantilla y anulaciones. NO relaciones respuestas con preguntas. Un enunciado puede continuar en la página siguiente; usa las páginas de contexto, pero devuelve solo elementos cuyo INICIO esté en las páginas núcleo. Para respuestas usa evidenceText como cita literal y candidateAnswer solo si figura inequívocamente. No infieras OMR, sombreado ni negrita sin evidencia estructural. Para cada elemento indica páginas reales y confianza. Devuelve únicamente JSON conforme al esquema.`;
@@ -54,8 +53,9 @@ function emptyCounts(): OcrInterpretationCounts {
   return { ordinaryQuestions: 0, reserveQuestions: 0, completeOptions: 0, incompleteQuestions: 0, answerCandidates: 0, annulmentCandidates: 0, doubtfulElements: 0 };
 }
 
-export function interpretationHookToken(ownerId: string, importId: string, fingerprint: string): string {
-  return `ocr04:${hash(`${ownerId}\n${importId}\n${fingerprint}`)}`;
+export function interpretationHookToken(ownerId: string, importId: string, fingerprint: string, attempt = 1): string {
+  const identity = `${ownerId}\n${importId}\n${fingerprint}`;
+  return `ocr04:${hash(attempt === 1 ? identity : `${identity}\n${attempt}`)}`;
 }
 
 export function toInterpretationView(status: OcrInterpretationStatus): OcrInterpretationView {
@@ -93,9 +93,7 @@ export async function buildInterpretationPlan(ownerId: string, manifest: OcrImpo
     let first = 1;
     while (first <= lengths.length) {
       let end = first;
-      let characters = lengths[first - 1]!;
-      while (end < lengths.length && end - first + 1 < MAX_CORE_PAGES && characters + lengths[end]! <= MAX_CORE_CHARACTERS) {
-        characters += lengths[end]!;
+      while (end < lengths.length && end - first + 1 < MAX_CORE_PAGES) {
         end += 1;
       }
       const corePages = Array.from({ length: end - first + 1 }, (_, index) => first + index);
@@ -110,12 +108,14 @@ export async function buildInterpretationPlan(ownerId: string, manifest: OcrImpo
 
 export async function createInterpretationStatus(ownerId: string, importId: string, fingerprint: string, model: string, totalBlocks: number): Promise<{ status: OcrInterpretationStatus; created: boolean }> {
   const existing = await readInterpretationStatus(ownerId, importId);
-  if (existing?.fingerprint === fingerprint) return { status: existing, created: false };
+  if (existing?.fingerprint === fingerprint && existing.state !== "error") return { status: existing, created: false };
   if (existing && (existing.state === "pendiente" || existing.state === "procesando")) throw new HTTPError("Ya hay una interpretación en curso", { status: 409 });
   const now = new Date().toISOString();
   const status: OcrInterpretationStatus = {
-    importId, ownerId, runId: null, fingerprint, model, state: "pendiente", stage: "en_cola",
-    totalBlocks, processedBlocks: 0, geminiCalls: 0, counts: emptyCounts(),
+    importId, ownerId, runId: null, attempt: existing?.fingerprint === fingerprint ? (existing.attempt ?? 1) + 1 : 1,
+    fingerprint, model, state: "pendiente", stage: "en_cola",
+    totalBlocks, processedBlocks: existing?.fingerprint === fingerprint ? existing.processedBlocks : 0,
+    geminiCalls: existing?.fingerprint === fingerprint ? existing.geminiCalls : 0, counts: emptyCounts(),
     createdAt: now, updatedAt: now, completedAt: null, error: null,
   };
   try {
@@ -123,7 +123,7 @@ export async function createInterpretationStatus(ownerId: string, importId: stri
     return { status, created: true };
   } catch {
     const raced = await readInterpretationStatus(ownerId, importId);
-    if (raced?.fingerprint === fingerprint) return { status: raced, created: false };
+    if (raced?.fingerprint === fingerprint && raced.state !== "error") return { status: raced, created: false };
     throw new HTTPError("No se pudo preparar la interpretación", { status: 503 });
   }
 }
@@ -262,8 +262,10 @@ export async function processInterpretationBlock(ownerId: string, importId: stri
   }
   const input = pages.map((page) => ({
     fileId: page.fileId, originalName: page.originalName, pageNumber: page.pageNumber,
-    method: page.method, text: page.text, blocks: page.blocks, paragraphs: page.paragraphs,
-    lines: page.lines, tokens: page.tokens, readingOrder: page.readingOrder,
+    method: page.method, text: page.text,
+    lines: ref.corePages.includes(page.pageNumber) ? page.lines.map((line) => ({
+      text: line.text, order: line.order, box: line.boundingBoxes[0] ?? null,
+    })) : [],
   }));
   const source = JSON.stringify({ file: ref.originalName, manualType: ref.manualType, corePages: ref.corePages, pages: input });
   const request = (prompt: string) => ({
@@ -319,6 +321,7 @@ export async function finalizeInterpretation(ownerId: string, importId: string, 
   }));
 }
 
-export async function markInterpretationFailure(ownerId: string, importId: string): Promise<void> {
-  await updateStatus(ownerId, importId, (status) => ({ ...status, state: "error", stage: "fallo_interpretacion", completedAt: new Date().toISOString(), error: "La interpretación no pudo completarse." })).catch(() => undefined);
+export async function markInterpretationFailure(ownerId: string, importId: string, message = "La interpretación no pudo completarse. Puedes reintentarla."): Promise<void> {
+  await updateStatus(ownerId, importId, (status) => ["completado", "revision"].includes(status.state)
+    ? status : { ...status, state: "error", stage: "fallo_interpretacion", completedAt: new Date().toISOString(), error: message }).catch(() => undefined);
 }

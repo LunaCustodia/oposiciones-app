@@ -27,7 +27,8 @@ export function parseTextualAnswers(page: OcrPageExtraction, initialSection: Ocr
     const matches = [...line.matchAll(answerPattern)];
     if (!matches.length) continue;
     const other = line.replace(answerPattern, "").replace(/[\s,;|.()\-:]/gu, "");
-    if (matches.length === 1 && /(?:^|\s)[A-E](?=\s|$)/iu.test(line.replace(answerPattern, " "))) continue;
+    const compactDouble = /^\s*\d{1,3}\s*[.):-]?\s*[A-E]\s+[A-E]\s*$/iu.test(line);
+    if (matches.length === 1 && /(?:^|\s)[A-E](?=\s|$)/iu.test(line.replace(answerPattern, " ")) && !compactDouble) continue;
     if (other.length > 24 && !templatePattern.test(line)) continue;
     const format = matches.length > 1 || /[|]/u.test(line) ? "tabla" : "textual";
     const box = page.lines[lineIndex]?.boundingBoxes[0];
@@ -35,15 +36,20 @@ export function parseTextualAnswers(page: OcrPageExtraction, initialSection: Ocr
     const ys = box?.vertices.map((point) => point.y) ?? [];
     const coordinates = box && xs.length && ys.length ? { coordinateSystem: box.coordinateSystem,
       x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) } : null;
-    for (const match of matches) {
+    for (const [matchIndex, match] of matches.entries()) {
       const value = match[2]!.toUpperCase();
       const annulled = value.startsWith("ANUL");
+      const next = matches[matchIndex + 1];
+      const tail = line.slice((match.index ?? 0) + match[0].length, next?.index ?? line.length);
+      const repeatedMark = !annulled && [...tail.matchAll(/\b[A-E]\b/giu)].length > 0;
+      const repeatedRow = matches.some((other, otherIndex) => otherIndex !== matchIndex && other[1] === match[1]);
+      const doubleMark = repeatedMark || repeatedRow;
       output.push({
         id: id([page.fileId, page.pageNumber, line, match.index, section]),
-        printedNumber: match[1]!, section, answer: annulled ? null : value,
+        printedNumber: match[1]!, section, answer: annulled || doubleMark ? null : value,
         annulled, ambiguous: false, method: format, fileId: page.fileId,
         originalName: page.originalName, page: page.pageNumber, coordinates,
-        imageId: null, confidence: 0.96, markScores: null, issues: [],
+        imageId: null, confidence: 0.96, markScores: null, issues: doubleMark ? ["doble_marca"] : [],
       });
     }
   }

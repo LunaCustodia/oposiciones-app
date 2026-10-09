@@ -31,10 +31,10 @@ export default defineHandler(async (event) => {
   const model = process.env.GEMINI_MODEL!;
   const plan = await buildInterpretationPlan(ownerId, manifest, model);
   const initialized = await createInterpretationStatus(ownerId, importId, plan.fingerprint, model, plan.refs.length);
-  if (["completado", "revision", "error"].includes(initialized.status.state)) {
+  if (["completado", "revision"].includes(initialized.status.state)) {
     return { interpretation: toInterpretationView(initialized.status), deduplicated: true };
   }
-  const hookToken = interpretationHookToken(ownerId, importId, plan.fingerprint);
+  const hookToken = interpretationHookToken(ownerId, importId, plan.fingerprint, initialized.status.attempt ?? 1);
   try {
     const existing = await getHookByToken(hookToken);
     const current = await readInterpretationStatus(ownerId, importId) ?? initialized.status;

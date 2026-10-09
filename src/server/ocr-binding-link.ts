@@ -21,9 +21,33 @@ export function linkAnswers(questions: OcrQuestionCandidate[], evidence: OcrAnsw
     byKey.set(exact, [...byKey.get(exact) ?? [], question]);
     byNumber.set(number, [...byNumber.get(number) ?? [], question]);
   }
+  const sectionByPage = new Map<string, OcrSemanticSection>();
+  const pageGroups = new Map<string, OcrAnswerEvidence[]>();
+  for (const source of evidence) {
+    const pageKey = `${source.fileId}:${source.page}`;
+    pageGroups.set(pageKey, [...pageGroups.get(pageKey) ?? [], source]);
+  }
+  for (const [pageKey, sources] of pageGroups) {
+    const sections = new Set<OcrSemanticSection>();
+    let unambiguous = 0;
+    for (const source of sources) {
+      if (source.section !== "desconocida") { sections.add(source.section); continue; }
+      const number = normalizePrintedNumber(source.printedNumber);
+      const matches = number ? byNumber.get(number) ?? [] : [];
+      if (matches.length === 1 && matches[0]!.section !== "desconocida") {
+        sections.add(matches[0]!.section);
+        unambiguous += 1;
+      }
+    }
+    if (sections.size === 1 && (unambiguous >= 2 || sources.some((source) => source.section !== "desconocida"))) {
+      sectionByPage.set(pageKey, [...sections][0]!);
+    }
+  }
   const assigned = new Map<string, OcrAnswerEvidence[]>();
   const orphans: OcrAnswerEvidence[] = [];
-  for (const source of evidence) {
+  for (const raw of evidence) {
+    const inferred = raw.section === "desconocida" ? sectionByPage.get(`${raw.fileId}:${raw.page}`) : null;
+    const source = inferred ? { ...raw, section: inferred, issues: [...raw.issues, "seccion_inferida_por_bloque"] } : raw;
     const number = normalizePrintedNumber(source.printedNumber);
     if (!number) { orphans.push(source); continue; }
     const matches = source.section === "desconocida"

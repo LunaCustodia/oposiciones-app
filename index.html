@@ -2561,21 +2561,21 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 {iniciandoExtraccionOcr ? 'Iniciando extracción…' : 'Iniciar extracción'}
                               </button>
                             )}
-                            {extraccionOcr?.state === 'completado' && !interpretacionOcr && (
+                            {extraccionOcr?.state === 'completado' && (!interpretacionOcr || interpretacionOcr.state === 'error') && (
                               <button
                                 type="button"
                                 onClick={iniciarInterpretacionOcr}
                                 disabled={iniciandoInterpretacionOcr || estadoServicioOcr.status !== 'available'}
                                 className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50"
                               >
-                                {iniciandoInterpretacionOcr ? 'Iniciando interpretación…' : 'Interpretar contenido'}
+                                {iniciandoInterpretacionOcr ? 'Iniciando interpretación…' : interpretacionOcr?.state === 'error' ? 'Reintentar interpretación' : 'Interpretar contenido'}
                               </button>
                             )}
-                            {['completado', 'revision'].includes(interpretacionOcr?.state) && !vinculacionOcr && (
+                            {['completado', 'revision'].includes(interpretacionOcr?.state) && (!vinculacionOcr || ['revision', 'error'].includes(vinculacionOcr.state)) && (
                               <button type="button" onClick={iniciarVinculacionOcr}
                                 disabled={iniciandoVinculacionOcr || estadoServicioOcr.status !== 'available'}
                                 className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50">
-                                {iniciandoVinculacionOcr ? 'Iniciando vinculación…' : 'Vincular respuestas'}
+                                {iniciandoVinculacionOcr ? 'Iniciando vinculación…' : vinculacionOcr ? 'Reprocesar vinculación' : 'Vincular respuestas'}
                               </button>
                             )}
                             {['completado', 'revision'].includes(vinculacionOcr?.state) && (
@@ -2661,8 +2661,9 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-2">
                             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Estado de la interpretación</p>
                             <p className="text-sm font-bold text-slate-900 dark:text-white">
-                              {interpretacionOcr.state === 'completado' ? 'Interpretación completada' : interpretacionOcr.state === 'revision' || interpretacionOcr.state === 'error' ? 'Requiere revisión' : interpretacionOcr.state === 'pendiente' ? 'Pendiente' : 'Procesando'}
+                              {interpretacionOcr.state === 'completado' ? 'Interpretación completada' : interpretacionOcr.state === 'revision' ? 'Requiere revisión' : interpretacionOcr.state === 'error' ? 'Error de interpretación' : interpretacionOcr.state === 'pendiente' ? 'Pendiente' : 'Procesando'}
                             </p>
+                            {interpretacionOcr.state === 'error' && <p role="alert" className="text-xs text-red-700 dark:text-red-300">{interpretacionOcr.error || 'La interpretación se detuvo. Puedes reintentarla.'}</p>}
                             <p className="text-[11px] text-slate-500">{interpretacionOcr.processedBlocks} / {interpretacionOcr.totalBlocks} bloques</p>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                               {[
