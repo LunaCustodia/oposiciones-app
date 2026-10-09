@@ -553,6 +553,8 @@
       const [estadoServicioOcr, setEstadoServicioOcr] = useState({ status: "checking" });
       const [archivosPdf, setArchivosPdf] = useState([]);
       const [importacionOcr, setImportacionOcr] = useState(null);
+      const [extraccionOcr, setExtraccionOcr] = useState(null);
+      const [iniciandoExtraccionOcr, setIniciandoExtraccionOcr] = useState(false);
       const [cargandoImportacionOcr, setCargandoImportacionOcr] = useState(false);
       const [subiendoImportacionOcr, setSubiendoImportacionOcr] = useState(false);
       const [errorArchivosPdf, setErrorArchivosPdf] = useState("");
@@ -628,6 +630,7 @@
       useEffect(() => {
         if (!autenticado) {
           setImportacionOcr(null);
+          setExtraccionOcr(null);
           setCargandoImportacionOcr(false);
           return undefined;
         }
@@ -654,6 +657,39 @@
         cargarImportacionActual();
         return () => controller.abort();
       }, [autenticado]);
+
+      useEffect(() => {
+        const importId = importacionOcr?.id;
+        if (!autenticado || !importId) {
+          setExtraccionOcr(null);
+          return undefined;
+        }
+
+        let cancelado = false;
+        let temporizador = null;
+        const consultarExtraccion = async () => {
+          try {
+            const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importId)}/extraction`, {
+              credentials: 'same-origin'
+            });
+            if (!respuesta.ok) throw new Error('status_failed');
+            const payload = await respuesta.json();
+            if (cancelado) return;
+            const estado = payload.extraction || null;
+            setExtraccionOcr(estado);
+            if (estado && (estado.state === 'pendiente' || estado.state === 'procesando')) {
+              temporizador = window.setTimeout(consultarExtraccion, 2000);
+            }
+          } catch {
+            if (!cancelado) setErrorArchivosPdf('No se pudo recuperar el estado de la extracción.');
+          }
+        };
+        consultarExtraccion();
+        return () => {
+          cancelado = true;
+          if (temporizador) window.clearTimeout(temporizador);
+        };
+      }, [autenticado, importacionOcr?.id, extraccionOcr?.state]);
 
       const cerrarMenu = useCallback((devolverFoco = true) => {
         setMenuAbierto(false);
@@ -969,6 +1005,7 @@
           setAutenticado(false);
           setCsrfToken("");
           setImportacionOcr(null);
+          setExtraccionOcr(null);
           setArchivosPdf([]);
           setExamenActivo(false);
         } catch {
@@ -1132,11 +1169,32 @@
           });
           if (!respuesta.ok) throw new Error('cancel_failed');
           setImportacionOcr(null);
+          setExtraccionOcr(null);
           setMensajeEstado('');
           setErrorArchivosPdf('');
           setProgresoSubidaOcr(0);
         } catch {
           setErrorArchivosPdf('No se pudo cancelar la importación. Inténtalo de nuevo.');
+        }
+      };
+
+      const iniciarExtraccionOcr = async () => {
+        if (!importacionOcr || importacionOcr.state !== 'lista' || iniciandoExtraccionOcr) return;
+        setIniciandoExtraccionOcr(true);
+        setErrorArchivosPdf('');
+        try {
+          const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importacionOcr.id)}/extraction`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'x-csrf-token': csrfToken }
+          });
+          const payload = await respuesta.json().catch(() => ({}));
+          if (!respuesta.ok) throw new Error(payload.message || payload.statusMessage || 'No se pudo iniciar la extracción.');
+          setExtraccionOcr(payload.extraction || null);
+        } catch (error) {
+          setErrorArchivosPdf(error.message || 'No se pudo iniciar la extracción documental.');
+        } finally {
+          setIniciandoExtraccionOcr(false);
         }
       };
 
@@ -2248,13 +2306,26 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                             </span>
                             <h2 className="text-sm font-bold text-slate-900 dark:text-white mt-2">Importación guardada</h2>
                           </div>
-                          <button
-                            type="button"
-                            onClick={cancelarImportacionOcr}
-                            className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-xl border border-red-100"
-                          >
-                            Cancelar y eliminar archivos
-                          </button>
+                          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                            {!extraccionOcr && importacionOcr.state === 'lista' && (
+                              <button
+                                type="button"
+                                onClick={iniciarExtraccionOcr}
+                                disabled={iniciandoExtraccionOcr || estadoServicioOcr.status !== 'available'}
+                                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50"
+                              >
+                                {iniciandoExtraccionOcr ? 'Iniciando extracción…' : 'Iniciar extracción'}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={cancelarImportacionOcr}
+                              disabled={extraccionOcr?.state === 'pendiente' || extraccionOcr?.state === 'procesando'}
+                              className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-xl border border-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Cancelar y eliminar archivos
+                            </button>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
@@ -2283,6 +2354,41 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                             </div>
                           ))}
                         </div>
+
+                        {extraccionOcr && (
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Estado de la extracción</p>
+                                <p className="text-sm font-bold text-slate-900 dark:text-white mt-1">
+                                  {extraccionOcr.state === 'completado' ? 'Extracción completada' : extraccionOcr.state === 'revision' || extraccionOcr.state === 'error' ? 'Requiere revisión' : extraccionOcr.state === 'pendiente' ? 'Pendiente' : 'Procesando'}
+                                </p>
+                              </div>
+                              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                                {extraccionOcr.processedPages} / {extraccionOcr.totalPages || '…'} páginas
+                              </span>
+                            </div>
+                            <progress
+                              value={extraccionOcr.processedPages}
+                              max={Math.max(1, extraccionOcr.totalPages)}
+                              className="w-full h-2 accent-[#0F6252]"
+                              aria-label={`Extracción ${extraccionOcr.processedPages} de ${extraccionOcr.totalPages || 0} páginas`}
+                            ></progress>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">Directas:</span> {extraccionOcr.directPages}</div>
+                              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">Document AI:</span> {extraccionOcr.documentAiPages}</div>
+                              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">Con error:</span> {extraccionOcr.errorPages}</div>
+                            </div>
+                            <div className="space-y-1.5">
+                              {extraccionOcr.files.map(file => (
+                                <div key={file.fileId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]">
+                                  <span className="font-semibold text-slate-700 dark:text-slate-200 break-words">{file.originalName}</span>
+                                  <span className="text-slate-500">{file.processedPages} / {file.totalPages ?? '…'} páginas{file.errorPages.length ? ` · Error en ${file.errorPages.join(', ')}` : ''}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {importacionOcr.error && (
                           <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">{importacionOcr.error}</p>

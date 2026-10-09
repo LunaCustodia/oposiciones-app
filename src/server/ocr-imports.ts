@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { del, get, head, put } from "@vercel/blob";
+import { del, get, head, list, put } from "@vercel/blob";
 import { HTTPError } from "nitro";
 import {
   OCR_IMPORT_FILE_TYPES,
@@ -302,12 +302,16 @@ export async function cancelImport(ownerId: string, importId: string): Promise<v
   const manifest = await readImport(ownerId, importId);
   if (!manifest) throw new HTTPError("Importación no encontrada", { status: 404 });
   const pointer = await readJson<CurrentPointer>(currentPath(ownerId));
-  const paths = [
-    ...manifest.files.map((file) => file.pathname),
-    manifestPath(ownerId, importId),
-  ];
+  const prefix = `${importPrefix(ownerId, importId)}/`;
+  const paths: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix, cursor, limit: 1_000 });
+    paths.push(...page.blobs.map((blob) => blob.pathname));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
   if (pointer?.importId === importId) paths.push(currentPath(ownerId));
-  await del(paths);
+  if (paths.length > 0) await del(paths);
 }
 
 export async function requireImportFile(
