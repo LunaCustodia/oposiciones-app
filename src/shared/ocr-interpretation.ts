@@ -1,5 +1,5 @@
 export const OCR_INTERPRETATION_SCHEMA_VERSION = "ocr04-v1";
-export const OCR_INTERPRETATION_PROMPT_VERSION = "semantic-2026-10-09-v2";
+export const OCR_INTERPRETATION_PROMPT_VERSION = "semantic-2026-10-09-v3";
 
 export type OcrInterpretationState = "pendiente" | "procesando" | "completado" | "revision" | "error";
 export type OcrSemanticSection = "ordinaria" | "reserva" | "desconocida";

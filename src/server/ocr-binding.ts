@@ -16,9 +16,6 @@ const root = "ocr02/imports";
 const zeroCounts = () => ({ questions: 0, answerRows: 0, associated: 0, unequivocal: 0, duplicateMarks: 0,
   linked: 0, annulled: 0, unanswered: 0, ambiguous: 0, conflicts: 0, orphans: 0 });
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const carmonaImportId = "2e20882d-cee0-4804-aa01-2bfde841c96a";
-const carmonaVisualTarget = (importId: string, pageNumber: number, number: string | null): boolean =>
-  importId === carmonaImportId && (pageNumber === 16 && number === "32" || pageNumber === 18 && number === "4");
 const path = (ownerId: string, importId: string, suffix: string) => `${root}/${ownerId}/${importId}/binding/${suffix}`;
 const pagePath = (ownerId: string, importId: string, fingerprint: string, ref: BindingPageRef) => path(ownerId, importId, `pages/${fingerprint}/${ref.fileId}-${String(ref.pageNumber).padStart(5, "0")}.json`);
 
@@ -145,37 +142,26 @@ export async function processBindingPage(ownerId: string, importId: string, fing
       const source = evidence.find((item) => item.id === mark.evidenceId);
       if (!source) continue;
       const lineBox = source.coordinates;
-      const checked = carmonaVisualTarget(importId, ref.pageNumber, source.printedNumber);
-      if (checked) {
-        source.markScores = mark.scores;
-        source.coordinates = mark.coordinates;
-      }
-      if (mark.marks.length < 2 && !checked) continue;
-      const options = new Set(mark.marks);
-      const reportedOverlay = checked && mark.marks.length === 1 && mark.marks[0] === "B" && source.answer === "B"
-        && "ACDE".split("").every((letter) => mark.scores[letter] === 0);
-      if (mark.marks.length > 1 || reportedOverlay) {
-        source.answer = options.size === 1 ? mark.marks[0]! : null;
-        source.issues = [...new Set([...source.issues.filter((issue) => issue !== "doble_marca"),
-          options.size === 1 ? "marca_duplicada" : "opciones_distintas"])];
-      }
       source.markScores = mark.scores;
+      if (mark.marks.length < 2) continue;
+      const options = new Set(mark.marks);
+      source.answer = options.size === 1 ? mark.marks[0]! : null;
+      source.issues = [...new Set([...source.issues.filter((issue) => issue !== "doble_marca"),
+        options.size === 1 ? "marca_duplicada" : "opciones_distintas"])];
       source.coordinates = mark.coordinates;
       const imageId = hash(`${fingerprint}:${ref.fileId}:${ref.pageNumber}:text:${source.id}`).slice(0, 24);
       await put(path(ownerId, importId, `evidence/${imageId}.png`),
-        carmonaVisualTarget(importId, ref.pageNumber, source.printedNumber) && lineBox
-          ? visual.cropRegion(lineBox) : visual.crop(mark.y, 12), {
+        lineBox ? visual.cropRegion(lineBox) : visual.crop(mark.y, 12), {
         access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
       source.imageId = imageId;
     }
-    for (const source of textual.filter((item) => !item.imageId && (carmonaVisualTarget(importId, ref.pageNumber, item.printedNumber)
-      || item.issues.some((issue) => issue === "marca_duplicada" || issue === "opciones_distintas")))) {
+    for (const source of textual.filter((item) => !item.imageId
+      && item.issues.some((issue) => issue === "marca_duplicada" || issue === "opciones_distintas"))) {
       const box = source.coordinates;
       if (!box || box.coordinateSystem !== "pdf_points_bottom_left") continue;
       const imageId = hash(`${fingerprint}:${ref.fileId}:${ref.pageNumber}:text:${source.id}`).slice(0, 24);
       await put(path(ownerId, importId, `evidence/${imageId}.png`),
-        carmonaVisualTarget(importId, ref.pageNumber, source.printedNumber)
-          ? visual.cropRegion(box) : visual.crop(visual.height - (box.y + box.height / 2) * visual.scale, 12), {
+        visual.cropRegion(box), {
           access: "private", addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60, contentType: "image/png" });
       source.imageId = imageId;
     }

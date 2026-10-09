@@ -1,6 +1,6 @@
 import type { OcrSemanticSection } from "./ocr-interpretation.js";
 
-export const OCR_BINDING_VERSION = "ocr05-v6";
+export const OCR_BINDING_VERSION = "ocr05-v7";
 export type OcrBindingState = "pendiente" | "procesando" | "completado" | "revision" | "error";
 export type OcrBindingDisposition = "vinculada" | "anulada" | "sin_respuesta" | "ambigua" | "conflicto";
 export type OcrEvidenceMethod = "textual" | "tabla" | "negrita" | "sombreado" | "casilla" | "circulo" | "omr" | "gemini_visual";

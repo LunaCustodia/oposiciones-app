@@ -109,6 +109,7 @@ describe("OCR-05 geometric marks", () => {
     }));
     const scores = await inspectTextualMarks(bytes, 1, sources, visual);
     expect(scores.map((row) => row.marks)).toEqual([["C"], ["B", "B"], ["A", "D"], ["E"]]);
+    expect(scores[0]!.scores.B).toBe(0);
     expect(scores[1]!.scores.B).toBeGreaterThan(scores[0]!.scores.B);
     const classified = sources.map((source, index) => {
       const row = scores[index]!;

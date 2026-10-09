@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OcrPageExtraction } from "../src/shared/ocr-extraction.js";
 import type { OcrInterpretationBlockRef } from "../src/shared/ocr-interpretation.js";
 import { anchorInterpretation } from "../src/server/ocr-interpretation.js";
+import { groundedSpan, recoverQuestionFromSource } from "../src/server/ocr-interpretation-grounding.js";
 import { parseWithSingleRepair, type ModelInterpretation } from "../src/server/ocr-interpretation-schema.js";
 
 const ref: OcrInterpretationBlockRef = {
@@ -64,6 +65,46 @@ describe("OCR-04 semantic anchoring", () => {
     expect(block.questions[0]?.statement).toBe("");
     expect(block.questions[0]?.options).toHaveLength(4);
     expect(block.questions[0]?.issues).toContain("contenido_no_verificado");
+  });
+
+  it("grounds wording despite accents, punctuation and PDF line breaks", () => {
+    const source = "37. ¿Qué condición\npresenta el archivo?\nA) Un registro\nB) Dos registros";
+    expect(groundedSpan("Que condicion presenta el archivo?", source)?.text).toBe("Qué condición presenta el archivo?");
+    expect(groundedSpan("internacional", "inter-\nnacional")?.text).toBe("internacional");
+    expect(groundedSpan("Un dato inventado", source)).toBeNull();
+  });
+
+  it("recovers an empty statement and duplicate model labels only from numbered source lines", () => {
+    const extracted = page(8, "37. ¿Qué condición presenta el archivo?\nA) Un registro\nB) Dos registros\nC) Tres registros\nD) Cuatro registros\n38. ¿Qué sigue?\nA) Sí\nB) No");
+    const candidate: ModelInterpretation = { classification: "preguntas", issues: [], answers: [], questions: [{
+      printedNumber: "37", section: "ordinaria", statement: "", subparts: [], tables: [], pages: [8], confidence: 0.8,
+      options: [{ letter: "A", text: "Un registro" }, { letter: "B", text: "Dos registros" },
+        { letter: "B", text: "Tres registros" }, { letter: "D", text: "Cuatro registros" }],
+      issues: ["texto_incompleto", "opciones_incompletas"],
+    }] };
+    const block = anchorInterpretation(candidate, { ...ref, corePages: [8], contextPages: [8] }, [extracted]);
+    expect(block.questions[0]?.statement).toBe("¿Qué condición presenta el archivo?");
+    expect(block.questions[0]?.options.map((option) => option.letter)).toEqual(["A", "B", "C", "D"]);
+    expect(block.questions[0]?.issues).not.toContain("texto_incompleto");
+    expect(block.questions[0]?.issues).not.toContain("opciones_incompletas");
+  });
+
+  it("does not recover from ambiguous numbering or an option list without source labels", () => {
+    const ambiguous = page(8, "37. Primera pregunta\nA) Uno\nB) Dos\n37. Otra pregunta\nA) Tres\nB) Cuatro");
+    expect(recoverQuestionFromSource([ambiguous], 8, "37")).toBeNull();
+    const unlabeled = page(8, "37. Pregunta sin letras\nUno\nDos");
+    expect(recoverQuestionFromSource([unlabeled], 8, "37")).toBeNull();
+  });
+
+  it("recovers only the numbered question when its options continue on the next page", () => {
+    const first = page(1, "5. ¿Qué elemento conserva los documentos?\nA) Archivo\nB) Almacén");
+    const second = page(2, "C) Biblioteca\nD) Depósito\n6. ¿Cuál es el siguiente?\nA) Primero\nB) Segundo");
+    expect(recoverQuestionFromSource([first, second], 1, "5")).toEqual({
+      statement: "¿Qué elemento conserva los documentos?",
+      options: [{ letter: "A", text: "Archivo" }, { letter: "B", text: "Almacén" },
+        { letter: "C", text: "Biblioteca" }, { letter: "D", text: "Depósito" }],
+      pages: [1, 2],
+    });
   });
 });
 

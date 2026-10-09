@@ -17,6 +17,7 @@ import {
 } from "../shared/ocr-interpretation.js";
 import { callGemini } from "./connections.js";
 import { readExtractionStatus, readPageExtraction } from "./ocr-extractions.js";
+import { groundedSpan, recoverQuestionFromSource } from "./ocr-interpretation-grounding.js";
 import { OCR_INTERPRETATION_JSON_SCHEMA, parseWithSingleRepair, type ModelInterpretation } from "./ocr-interpretation-schema.js";
 
 const MAX_CORE_PAGES = 1;
@@ -156,12 +157,8 @@ async function recordGeminiCall(ownerId: string, importId: string): Promise<void
   await updateStatus(ownerId, importId, (status) => ({ ...status, geminiCalls: status.geminiCalls + 1 }));
 }
 
-function normalized(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("es").replace(/[\s\u00ad]+/g, "");
-}
-
 function supported(value: string, source: string): boolean {
-  return value.length > 0 && normalized(source).includes(normalized(value));
+  return Boolean(groundedSpan(value, source));
 }
 
 function uniq<T>(values: T[]): T[] { return [...new Set(values)]; }
@@ -185,19 +182,37 @@ export function anchorInterpretation(output: ModelInterpretation, ref: OcrInterp
     const source = validPages.map((page) => byNumber.get(page)!.text).join("\n");
     const questionIssues: OcrQuestionCandidate["issues"] = [...item.issues];
     if (validPages.length !== item.pages.length) questionIssues.push("contenido_no_verificado");
-    const statement = supported(item.statement, source) ? item.statement : "";
+    const groundedStatement = groundedSpan(item.statement, source)?.text ?? "";
+    const groundedOptions = item.options.flatMap((option) => {
+      const span = groundedSpan(option.text, source);
+      return span && supported(option.letter, source) ? [{ letter: option.letter.toUpperCase(), text: span.text }] : [];
+    });
+    const repeatedLetters = new Set(groundedOptions.map((option) => option.letter)).size !== groundedOptions.length;
+    const recovered = !groundedStatement || groundedOptions.length < item.options.length || groundedOptions.length < 4 || repeatedLetters
+      ? recoverQuestionFromSource(pages, validPages[0]!, item.printedNumber) : null;
+    const statement = recovered && (!groundedStatement || groundedSpan(item.statement, recovered.statement))
+      ? recovered.statement : groundedStatement;
     if (!statement) questionIssues.push("texto_incompleto", "contenido_no_verificado");
-    const subparts = item.subparts.filter((part) => supported(part.text, source) && supported(part.label, source));
+    const subparts = item.subparts.flatMap((part) => {
+      const span = groundedSpan(part.text, source);
+      return span && supported(part.label, source) ? [{ label: part.label, text: span.text }] : [];
+    });
     if (subparts.length !== item.subparts.length) questionIssues.push("contenido_no_verificado");
-    const options = item.options.filter((option) => supported(option.text, source) && supported(option.letter, source));
-    if (options.length !== item.options.length || (options.length > 0 && options.length < 4)) questionIssues.push("opciones_incompletas");
+    const options = recovered && recovered.options.length >= groundedOptions.length
+      && (groundedOptions.length < 4 || repeatedLetters) ? recovered.options : groundedOptions;
+    if (options.length < 4 || new Set(options.map((option) => option.letter)).size !== options.length
+      || (options === groundedOptions && options.length !== item.options.length)) questionIssues.push("opciones_incompletas");
     const tables = item.tables.filter((table) => supported(table.text, source)).map((table) => ({
-      text: table.text,
+      text: groundedSpan(table.text, source)!.text,
       rows: table.rows.map((row) => row.filter((cell) => supported(cell, source))).filter((row) => row.length),
     }));
     if (tables.length !== item.tables.length || tables.some((table, index) => table.rows.flat().length !== item.tables[index]?.rows.flat().length)) questionIssues.push("contenido_no_verificado");
     const printedNumber = item.printedNumber && supported(item.printedNumber, source) ? item.printedNumber : null;
     if (item.printedNumber && !printedNumber) questionIssues.push("numeracion_dudosa");
+    if (recovered && (!groundedStatement || options === recovered.options)) {
+      for (const page of recovered.pages) if (!validPages.includes(page)) validPages.push(page);
+      validPages.sort((a, b) => a - b);
+    }
     if (validPages.length > 1) questionIssues.push("salto_de_pagina");
     const section = item.section === "reserva" && !/reserva/i.test(contextSource) ? "desconocida" : item.section;
     if (section !== item.section) questionIssues.push("numeracion_dudosa");
@@ -205,7 +220,9 @@ export function anchorInterpretation(output: ModelInterpretation, ref: OcrInterp
       id: hash(`${ref.fileId}\n${validPages.join(",")}\n${printedNumber}\n${statement}\n${section}`).slice(0, 24),
       printedNumber, section, statement, subparts, options, tables,
       fileId: ref.fileId, originalName: ref.originalName, pages: validPages,
-      confidence: item.confidence, issues: uniq(questionIssues),
+      confidence: item.confidence, issues: uniq(questionIssues.filter((issue) =>
+        !((issue === "texto_incompleto" && !groundedStatement && Boolean(recovered?.statement))
+          || (issue === "opciones_incompletas" && options === recovered?.options && options.length >= 4)))),
     });
   }
   for (const item of output.answers) {
