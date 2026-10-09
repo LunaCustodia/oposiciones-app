@@ -1,4 +1,5 @@
 import { sign } from "node:crypto";
+import type { DocumentAiProbeSummary } from "../shared/ocr-job.js";
 
 export const CONNECTION_ENV_NAMES = {
   gemini: ["GEMINI_API_KEY", "GEMINI_MODEL"],
@@ -147,7 +148,7 @@ export async function probeGemini(): Promise<void> {
   });
 }
 
-export async function probeDocumentAi(): Promise<void> {
+export async function probeDocumentAi(): Promise<DocumentAiProbeSummary> {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
   const location = process.env.GOOGLE_CLOUD_LOCATION;
   const processorId = process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID;
@@ -174,5 +175,25 @@ export async function probeDocumentAi(): Promise<void> {
     Object.assign(error, { status: response.status });
     throw error;
   }
-  await response.arrayBuffer();
+  const payload = await response.json() as {
+    document?: {
+      text?: unknown;
+      pages?: Array<{
+        blocks?: unknown[];
+        paragraphs?: unknown[];
+        tokens?: unknown[];
+      }>;
+    };
+  };
+  const text = typeof payload.document?.text === "string" ? payload.document.text : "";
+  const pages = Array.isArray(payload.document?.pages) ? payload.document.pages : [];
+
+  return {
+    textPresent: text.includes("OCR-01"),
+    characterCount: text.length,
+    pageCount: pages.length,
+    blockCount: pages.reduce((total, page) => total + (Array.isArray(page.blocks) ? page.blocks.length : 0), 0),
+    paragraphCount: pages.reduce((total, page) => total + (Array.isArray(page.paragraphs) ? page.paragraphs.length : 0), 0),
+    tokenCount: pages.reduce((total, page) => total + (Array.isArray(page.tokens) ? page.tokens.length : 0), 0),
+  };
 }

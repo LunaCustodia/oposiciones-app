@@ -24,10 +24,22 @@ export interface ConnectionProbeResult {
   documentAi: "real" | "pending_configuration";
 }
 
+export type TechnicalProbeTarget = "all" | "document_ai";
+
+export interface DocumentAiProbeSummary {
+  textPresent: boolean;
+  characterCount: number;
+  pageCount: number;
+  blockCount: number;
+  paragraphCount: number;
+  tokenCount: number;
+}
+
 export interface TechnicalJobResult {
   mechanism: "vercel_workflow";
   completedAt: string;
   connections: ConnectionProbeResult;
+  documentAiSummary?: DocumentAiProbeSummary;
 }
 
 export interface TechnicalWorkflowResult {

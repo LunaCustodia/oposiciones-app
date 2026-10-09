@@ -17,12 +17,17 @@ export default defineHandler(async (event) => {
   const body = await event.req.json().catch(() => null) as {
     type?: unknown;
     idempotencyKey?: unknown;
+    probe?: unknown;
   } | null;
   const headerKey = event.req.headers.get("idempotency-key");
   const idempotencyKey = typeof body?.idempotencyKey === "string" ? body.idempotencyKey : headerKey;
   if (body?.type !== "technical" || !idempotencyKey || idempotencyKey.length > 128) {
     throw new HTTPError("Trabajo técnico o clave de idempotencia no válidos", { status: 400 });
   }
+  if (body.probe !== undefined && body.probe !== "document_ai") {
+    throw new HTTPError("Sonda técnica no válida", { status: 400 });
+  }
+  const probeTarget = body.probe === "document_ai" ? "document_ai" : "all";
 
   const id = createTechnicalJobId(ownerId, idempotencyKey, secret);
   const hookToken = jobHookToken(id);
@@ -43,7 +48,7 @@ export default defineHandler(async (event) => {
     return { job: { ...job, createdAt: existing.createdAt.toISOString() }, deduplicated: true };
   } catch {
     try {
-      await start(ocr01TechnicalWorkflow, [job, hookToken], {
+      await start(ocr01TechnicalWorkflow, [job, hookToken, probeTarget], {
         attributes: { jobKey: hookToken, ownerId, state: job.state, stage: job.stage },
       });
       return { job, deduplicated: false };

@@ -2,6 +2,7 @@ import { FatalError, RetryableError, createHook, setAttributes } from "workflow"
 import type {
   ConnectionProbeResult,
   OcrJobContract,
+  TechnicalProbeTarget,
   TechnicalJobResult,
   TechnicalWorkflowResult,
 } from "../src/shared/ocr-job.js";
@@ -21,7 +22,7 @@ function throwSafeProbeError(error: unknown, connection: "Gemini" | "Document AI
   throw new FatalError(`${connection} rechazó la comprobación de conexión.`);
 }
 
-async function runTechnicalProbe(): Promise<TechnicalJobResult> {
+async function runTechnicalProbe(target: TechnicalProbeTarget): Promise<TechnicalJobResult> {
   "use step";
 
   const availability = getSafeAvailability();
@@ -30,7 +31,7 @@ async function runTechnicalProbe(): Promise<TechnicalJobResult> {
     documentAi: "pending_configuration",
   };
 
-  if (availability.connections.gemini) {
+  if (target === "all" && availability.connections.gemini) {
     try {
       await probeGemini();
       connections.gemini = "real";
@@ -39,9 +40,10 @@ async function runTechnicalProbe(): Promise<TechnicalJobResult> {
     }
   }
 
+  let documentAiSummary: TechnicalJobResult["documentAiSummary"];
   if (availability.connections.documentAi) {
     try {
-      await probeDocumentAi();
+      documentAiSummary = await probeDocumentAi();
       connections.documentAi = "real";
     } catch (error) {
       throwSafeProbeError(error, "Document AI");
@@ -52,6 +54,7 @@ async function runTechnicalProbe(): Promise<TechnicalJobResult> {
     mechanism: "vercel_workflow",
     completedAt: new Date().toISOString(),
     connections,
+    documentAiSummary,
   };
 }
 
@@ -60,6 +63,7 @@ runTechnicalProbe.maxRetries = 2;
 export async function ocr01TechnicalWorkflow(
   job: OcrJobContract,
   hookToken: string,
+  target: TechnicalProbeTarget = "all",
 ): Promise<TechnicalWorkflowResult> {
   "use workflow";
 
@@ -79,7 +83,7 @@ export async function ocr01TechnicalWorkflow(
     stage: "comprobacion_tecnica",
   });
 
-  const result = await runTechnicalProbe();
+  const result = await runTechnicalProbe(target);
   const completedJob: OcrJobContract = {
     ...job,
     state: "completado",
