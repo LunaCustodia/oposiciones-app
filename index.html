@@ -555,6 +555,8 @@
       const [importacionOcr, setImportacionOcr] = useState(null);
       const [extraccionOcr, setExtraccionOcr] = useState(null);
       const [iniciandoExtraccionOcr, setIniciandoExtraccionOcr] = useState(false);
+      const [interpretacionOcr, setInterpretacionOcr] = useState(null);
+      const [iniciandoInterpretacionOcr, setIniciandoInterpretacionOcr] = useState(false);
       const [cargandoImportacionOcr, setCargandoImportacionOcr] = useState(false);
       const [subiendoImportacionOcr, setSubiendoImportacionOcr] = useState(false);
       const [errorArchivosPdf, setErrorArchivosPdf] = useState("");
@@ -631,6 +633,7 @@
         if (!autenticado) {
           setImportacionOcr(null);
           setExtraccionOcr(null);
+          setInterpretacionOcr(null);
           setCargandoImportacionOcr(false);
           return undefined;
         }
@@ -690,6 +693,36 @@
           if (temporizador) window.clearTimeout(temporizador);
         };
       }, [autenticado, importacionOcr?.id, extraccionOcr?.state]);
+
+      useEffect(() => {
+        const importId = importacionOcr?.id;
+        if (!autenticado || !importId || extraccionOcr?.state !== 'completado') {
+          setInterpretacionOcr(null);
+          return undefined;
+        }
+        let cancelado = false;
+        let temporizador = null;
+        const consultarInterpretacion = async () => {
+          try {
+            const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importId)}/interpretation`, { credentials: 'same-origin' });
+            if (!respuesta.ok) throw new Error('status_failed');
+            const payload = await respuesta.json();
+            if (cancelado) return;
+            const estado = payload.interpretation || null;
+            setInterpretacionOcr(estado);
+            if (estado && (estado.state === 'pendiente' || estado.state === 'procesando')) {
+              temporizador = window.setTimeout(consultarInterpretacion, 2000);
+            }
+          } catch {
+            if (!cancelado) setErrorArchivosPdf('No se pudo recuperar el estado de la interpretación.');
+          }
+        };
+        consultarInterpretacion();
+        return () => {
+          cancelado = true;
+          if (temporizador) window.clearTimeout(temporizador);
+        };
+      }, [autenticado, importacionOcr?.id, extraccionOcr?.state, interpretacionOcr?.state]);
 
       const cerrarMenu = useCallback((devolverFoco = true) => {
         setMenuAbierto(false);
@@ -1170,6 +1203,7 @@
           if (!respuesta.ok) throw new Error('cancel_failed');
           setImportacionOcr(null);
           setExtraccionOcr(null);
+          setInterpretacionOcr(null);
           setMensajeEstado('');
           setErrorArchivosPdf('');
           setProgresoSubidaOcr(0);
@@ -1195,6 +1229,24 @@
           setErrorArchivosPdf(error.message || 'No se pudo iniciar la extracción documental.');
         } finally {
           setIniciandoExtraccionOcr(false);
+        }
+      };
+
+      const iniciarInterpretacionOcr = async () => {
+        if (!importacionOcr || extraccionOcr?.state !== 'completado' || iniciandoInterpretacionOcr) return;
+        setIniciandoInterpretacionOcr(true);
+        setErrorArchivosPdf('');
+        try {
+          const respuesta = await fetch(`/api/ocr/imports/${encodeURIComponent(importacionOcr.id)}/interpretation`, {
+            method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken }
+          });
+          const payload = await respuesta.json().catch(() => ({}));
+          if (!respuesta.ok) throw new Error(payload.message || payload.statusMessage || 'No se pudo iniciar la interpretación.');
+          setInterpretacionOcr(payload.interpretation || null);
+        } catch (error) {
+          setErrorArchivosPdf(error.message || 'No se pudo iniciar la interpretación.');
+        } finally {
+          setIniciandoInterpretacionOcr(false);
         }
       };
 
@@ -2317,10 +2369,20 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                 {iniciandoExtraccionOcr ? 'Iniciando extracción…' : 'Iniciar extracción'}
                               </button>
                             )}
+                            {extraccionOcr?.state === 'completado' && !interpretacionOcr && (
+                              <button
+                                type="button"
+                                onClick={iniciarInterpretacionOcr}
+                                disabled={iniciandoInterpretacionOcr || estadoServicioOcr.status !== 'available'}
+                                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-white bg-[#0F6252] hover:bg-[#0c4d40] rounded-xl disabled:opacity-50"
+                              >
+                                {iniciandoInterpretacionOcr ? 'Iniciando interpretación…' : 'Interpretar contenido'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={cancelarImportacionOcr}
-                              disabled={extraccionOcr?.state === 'pendiente' || extraccionOcr?.state === 'procesando'}
+                              disabled={extraccionOcr?.state === 'pendiente' || extraccionOcr?.state === 'procesando' || interpretacionOcr?.state === 'pendiente' || interpretacionOcr?.state === 'procesando'}
                               className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-xl border border-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Cancelar y eliminar archivos
@@ -2385,6 +2447,29 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                                   <span className="font-semibold text-slate-700 dark:text-slate-200 break-words">{file.originalName}</span>
                                   <span className="text-slate-500">{file.processedPages} / {file.totalPages ?? '…'} páginas{file.errorPages.length ? ` · Error en ${file.errorPages.join(', ')}` : ''}</span>
                                 </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {interpretacionOcr && (
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-2">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Estado de la interpretación</p>
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              {interpretacionOcr.state === 'completado' ? 'Interpretación completada' : interpretacionOcr.state === 'revision' || interpretacionOcr.state === 'error' ? 'Requiere revisión' : interpretacionOcr.state === 'pendiente' ? 'Pendiente' : 'Procesando'}
+                            </p>
+                            <p className="text-[11px] text-slate-500">{interpretacionOcr.processedBlocks} / {interpretacionOcr.totalBlocks} bloques</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                              {[
+                                ['Ordinarias', interpretacionOcr.counts.ordinaryQuestions],
+                                ['Reserva', interpretacionOcr.counts.reserveQuestions],
+                                ['Opciones completas', interpretacionOcr.counts.completeOptions],
+                                ['Incompletas', interpretacionOcr.counts.incompleteQuestions],
+                                ['Plantillas/respuestas', interpretacionOcr.counts.answerCandidates],
+                                ['Anulaciones', interpretacionOcr.counts.annulmentCandidates],
+                                ['Dudosos', interpretacionOcr.counts.doubtfulElements]
+                              ].map(([label, value]) => (
+                                <div key={label} className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5"><span className="font-bold">{label}:</span> {value}</div>
                               ))}
                             </div>
                           </div>
