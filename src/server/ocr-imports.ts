@@ -199,14 +199,40 @@ export async function readCurrentImport(ownerId: string): Promise<OcrImportManif
   return readImport(ownerId, pointer.importId);
 }
 
+export async function listOwnerImports(ownerId: string): Promise<OcrImportManifest[]> {
+  ensureBlobConfigured();
+  const prefix = `${ownerPrefix(ownerId)}/`;
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix, cursor, limit: 1_000 });
+    for (const blob of page.blobs) {
+      const relative = blob.pathname.slice(prefix.length);
+      const match = /^([0-9a-f-]{36})\/manifest\.json$/i.exec(relative);
+      if (match) ids.push(match[1]!);
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  const manifests = await Promise.all(ids.map((id) => readImport(ownerId, id)));
+  return manifests.filter((manifest): manifest is OcrImportManifest => manifest !== null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function selectImport(ownerId: string, importId: string): Promise<OcrImportManifest> {
+  const manifest = await readImport(ownerId, importId);
+  if (!manifest) throw new HTTPError("Importación no encontrada", { status: 404 });
+  await writeJson(currentPath(ownerId), { importId } satisfies CurrentPointer);
+  return manifest;
+}
+
 export async function createImport(ownerId: string, raw: CreateImportInput): Promise<{
   manifest: OcrImportManifest;
   uploads: Array<{ clientId: string; fileId: string; pathname: string }>;
 }> {
   ensureBlobConfigured();
   const current = await readCurrentImport(ownerId);
-  if (current) {
-    throw new HTTPError("Ya existe una importación. Cancélala antes de crear otra.", { status: 409 });
+  if (current?.state === "subiendo") {
+    throw new HTTPError("Ya hay una subida en curso. Termínala o cancélala antes de crear otra.", { status: 409 });
   }
 
   const id = randomUUID();
@@ -310,8 +336,12 @@ export async function cancelImport(ownerId: string, importId: string): Promise<v
     paths.push(...page.blobs.map((blob) => blob.pathname));
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);
-  if (pointer?.importId === importId) paths.push(currentPath(ownerId));
   if (paths.length > 0) await del(paths);
+  if (pointer?.importId === importId) {
+    const next = (await listOwnerImports(ownerId))[0];
+    if (next) await writeJson(currentPath(ownerId), { importId: next.id } satisfies CurrentPointer);
+    else await del(currentPath(ownerId));
+  }
 }
 
 export async function requireImportFile(
