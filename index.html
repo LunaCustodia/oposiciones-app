@@ -481,9 +481,13 @@
 
     function App() {
       const [intentoInicial] = useState(cargarIntentoOficialGuardado);
-      const [autenticado, setAutenticado] = useState(() => localStorage.getItem("auth_session") === "true");
-      const [emailInput, setEmailInput] = useState(() => localStorage.getItem("auth_email") || "lolixi@icloud.com");
+      const [autenticado, setAutenticado] = useState(false);
+      const [comprobandoSesion, setComprobandoSesion] = useState(true);
+      const [csrfToken, setCsrfToken] = useState("");
+      const [emailInput, setEmailInput] = useState("lolixi@icloud.com");
       const [passwordInput, setPasswordInput] = useState("");
+      const [errorAcceso, setErrorAcceso] = useState("");
+      const [accediendo, setAccediendo] = useState(false);
       const [moduloActivo, setModuloActivo] = useState("inicio");
       const [modoOscuro, setModoOscuro] = useState(false);
       const [menuSuperpuesto, setMenuSuperpuesto] = useState(detectarMenuSuperpuesto);
@@ -561,6 +565,29 @@
 
       useEffect(() => {
         localStorage.removeItem("gemini_api_key");
+        localStorage.removeItem("auth_session");
+        localStorage.removeItem("auth_email");
+
+        const controller = new AbortController();
+        const restaurarSesion = async () => {
+          try {
+            const respuesta = await fetch('/api/ocr/session', {
+              credentials: 'same-origin',
+              signal: controller.signal
+            });
+            const sesion = respuesta.ok ? await respuesta.json() : null;
+            if (sesion?.authenticated === true && typeof sesion.csrf === 'string') {
+              setCsrfToken(sesion.csrf);
+              setAutenticado(true);
+            }
+          } catch (error) {
+            if (error.name === 'AbortError') return;
+          } finally {
+            if (!controller.signal.aborted) setComprobandoSesion(false);
+          }
+        };
+        restaurarSesion();
+        return () => controller.abort();
       }, []);
 
       useEffect(() => {
@@ -860,31 +887,55 @@
 
       const handleLogin = async (e) => {
         e.preventDefault();
+        setAccediendo(true);
+        setErrorAcceso("");
         setEstadoServicioOcr({ status: "checking" });
         try {
-          await fetch('/api/ocr/session', {
+          const respuesta = await fetch('/api/ocr/session', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: emailInput, password: passwordInput })
           });
-        } catch {
+          if (!respuesta.ok) {
+            if (respuesta.status === 401) throw new Error('Credenciales incorrectas.');
+            if (respuesta.status === 429) throw new Error('Demasiados intentos. Inténtalo más tarde.');
+            if (respuesta.status === 503) throw new Error('El acceso está pendiente de configuración en el servidor.');
+            throw new Error('No se pudo validar el acceso.');
+          }
+          const sesion = await respuesta.json();
+          if (sesion?.authenticated !== true || typeof sesion.csrf !== 'string') {
+            throw new Error('No se pudo validar el acceso.');
+          }
+          setCsrfToken(sesion.csrf);
+          setModuloActivo("inicio");
+          setAutenticado(true);
+          setPasswordInput("");
+        } catch (error) {
           setEstadoServicioOcr({ status: "pending_configuration" });
+          setAutenticado(false);
+          setCsrfToken("");
+          setPasswordInput("");
+          setErrorAcceso(error.message || 'No se pudo validar el acceso.');
+        } finally {
+          setAccediendo(false);
         }
-        setModuloActivo("inicio");
-        setAutenticado(true);
-        localStorage.setItem("auth_session", "true");
       };
 
       const handleLogout = async () => {
         try {
-          await fetch('/api/ocr/session', { method: 'DELETE', credentials: 'same-origin' });
+          const respuesta = await fetch('/api/ocr/session', {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: { 'x-csrf-token': csrfToken }
+          });
+          if (!respuesta.ok && respuesta.status !== 401) throw new Error('logout_failed');
+          setAutenticado(false);
+          setCsrfToken("");
+          setExamenActivo(false);
         } catch {
-          // La sesión local se cierra aunque el servidor no esté disponible.
+          alert('No se pudo cerrar la sesión en el servidor. Inténtalo de nuevo.');
         }
-        setAutenticado(false);
-        localStorage.removeItem("auth_session");
-        setExamenActivo(false);
       };
 
       const claveArchivoPdf = (file) => `${file.name}|${file.size}|${file.lastModified}`;
@@ -1003,7 +1054,10 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
             const respuesta = await fetch('/api/ocr/gemini', {
               method: 'POST',
               credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-csrf-token': csrfToken
+              },
               body: JSON.stringify(payload)
             });
 
@@ -1388,6 +1442,14 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
       }, [filtroBloque]);
       const resumenRevision = calcularResumenImportacion(preguntasExtraidas, resultadoImportacion, archivosPdf);
 
+      if (comprobandoSesion) {
+        return (
+          <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+            <p className="text-xs font-semibold text-slate-600">Comprobando sesión segura…</p>
+          </div>
+        );
+      }
+
       if (!autenticado) {
         return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -1421,11 +1483,15 @@ Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown, con esta forma:
                     className="w-full bg-[#EEF4FF] border border-[#D5E2FF] focus:border-[#0F6252] rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none"
                   />
                 </div>
+                {errorAcceso && (
+                  <p role="alert" className="text-xs font-semibold text-red-700">{errorAcceso}</p>
+                )}
                 <button
                   type="submit"
-                  className="w-full bg-[#0F6252] hover:bg-[#0c4d40] text-white font-bold text-xs py-3 rounded-xl transition mt-2 shadow-xs"
+                  disabled={accediendo}
+                  className="w-full bg-[#0F6252] hover:bg-[#0c4d40] disabled:opacity-60 text-white font-bold text-xs py-3 rounded-xl transition mt-2 shadow-xs"
                 >
-                  Entrar
+                  {accediendo ? 'Validando…' : 'Entrar'}
                 </button>
               </form>
             </div>

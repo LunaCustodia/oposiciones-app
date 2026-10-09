@@ -8,6 +8,11 @@ describe("cliente OCR-01", () => {
     expect(source).not.toContain("apiKeyGemini");
     expect(source).not.toContain('localStorage.setItem("gemini_api_key"');
     expect(source).toContain('localStorage.removeItem("gemini_api_key")');
+    expect(source).not.toContain('localStorage.getItem("auth_session")');
+    expect(source).not.toContain('localStorage.setItem("auth_session"');
+    expect(source).toContain('localStorage.removeItem("auth_session")');
+    expect(source).toContain("'x-csrf-token': csrfToken");
+    expect(source).toContain("fetch('/api/ocr/session'");
     expect(source).toContain("/api/ocr/gemini");
   });
 });

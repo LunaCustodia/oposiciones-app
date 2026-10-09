@@ -1,11 +1,11 @@
 import { defineHandler, HTTPError } from "nitro";
-import { requireOcrOwner } from "../../../src/server/auth.js";
+import { requireCsrf } from "../../../src/server/auth.js";
 import { callGemini } from "../../../src/server/connections.js";
 
 const MAX_BODY_BYTES = 4_000_000;
 
 export default defineHandler(async (event) => {
-  requireOcrOwner(event);
+  requireCsrf(event);
   event.res.headers.set("cache-control", "no-store");
 
   const declaredLength = Number(event.req.headers.get("content-length") || 0);

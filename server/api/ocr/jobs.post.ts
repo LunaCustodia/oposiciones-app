@@ -3,13 +3,13 @@ import { getHookByToken, start } from "workflow/api";
 import {
   createTechnicalJobId,
   jobHookToken,
-  requireOcrOwner,
+  requireCsrf,
 } from "../../../src/server/auth.js";
 import type { OcrJobContract } from "../../../src/shared/ocr-job.js";
 import { ocr01TechnicalWorkflow } from "../../../workflows/ocr01-technical.js";
 
 export default defineHandler(async (event) => {
-  const ownerId = requireOcrOwner(event);
+  const ownerId = requireCsrf(event).sub;
   event.res.headers.set("cache-control", "no-store");
   const secret = process.env.OCR_SESSION_SECRET;
   if (!secret) throw new HTTPError("Servicio pendiente de configuración", { status: 503 });
